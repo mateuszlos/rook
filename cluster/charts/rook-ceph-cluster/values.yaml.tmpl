@@ -9,6 +9,8 @@ cluster:
   dashboard:
     enabled: true
   network:
+    public_net: 10.2.0.0/16
+    cluster_net: 10.3.0.0/16
     hostNetwork: false
   rbdMirroring:
     workers: 0
@@ -17,3 +19,7 @@ cluster:
   storage:
     useAllNodes: true
     useAllDevices: true
+rgws:
+  - name: my-rgw-cluster
+    gateway:
+      instances: 3

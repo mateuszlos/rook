@@ -1,0 +1,14 @@
+{{ if .Values.network }}
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: rook-config-override
+  namespace: rook-ceph
+data:
+  config: |
+    [global]
+    public network =  {{ .Values.cluster.network.public_net }}
+    cluster network = {{ .Values.cluster.network.cluster_net }}
+    public addr = ""
+    cluster addr = ""
+{{ end }}

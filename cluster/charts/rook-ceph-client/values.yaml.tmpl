@@ -1,0 +1,26 @@
+pools:
+  rbd:
+    size: 3
+    failureDomain: host
+    class: hdd
+  volumes:
+    size: 3
+    failureDomain: host
+    class: hdd
+  images:
+    size: 3
+    failureDomain: host
+    class: hdd
+storageClasses:
+  - name: rbd-ceph-csi
+    pool: rbd
+users:
+  rbd:
+    - name: admin
+      secret:
+    - name: kubernetes
+      secret:
+  rgw:
+    - name: my-user
+      store: my-store
+      displayName: This is my store
