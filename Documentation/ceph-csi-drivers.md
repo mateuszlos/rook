@@ -124,13 +124,10 @@ maintain a config map whose contents will match this key. By default this is
 Then create the storage class:
 
 ```console
-kubectl create -f cluster/examples/kubernetes/ceph/csi/example/rbd/storegeclass.yaml
+kubectl create -f cluster/examples/kubernetes/ceph/csi/example/rbd/storageclass.yaml
 ```
 
 ## Create RBD Secret
-
-Create a Secret that matches `adminid` or `userid` specified in the
-[storageclass](../cluster/examples/kubernetes/ceph/csi/example/rbd/storageclass.yaml).
 
 Find a Ceph operator pod (in the following example, the pod is
 `rook-ceph-operator-7464bd774c-scb5c`) and create a Ceph user for that pool called
@@ -140,14 +137,8 @@ Find a Ceph operator pod (in the following example, the pod is
 kubectl exec -ti -n rook-ceph rook-ceph-operator-7464bd774c-scb5c -- bash -c "ceph -c /var/lib/rook/rook-ceph/rook-ceph.config auth get-or-create-key client.kubernetes mon \"allow profile rbd\" osd \"profile rbd pool=rbd\""
 ```
 
-Then create a Secret using admin and `kubernetes` keyrings:
-
-In [secret](../cluster/examples/kubernetes/ceph/csi/example/rbd/secret.yaml),
-you need your Ceph admin/user password encoded in base64.
-
-Run `ceph auth ls` in your rook ceph operator pod, to encode the key of your
-admin/user run `echo -n KEY|base64`
-and replace `BASE64-ENCODED-PASSWORD` by your encoded key.
+Run `ceph auth ls` in your rook ceph operator pod, to get the key of your
+admin/user.
 
 ```bash
 kubectl exec -ti -n rook-ceph rook-ceph-operator-6c49994c4f-pwqcx /bin/sh
@@ -202,12 +193,22 @@ mgr.a
 	caps: [mon] allow *
 	caps: [osd] allow *
 
-#encode admin/user key
-sh-4.2# echo -n AQD0pK1cqcBDCBAAdXNXfgAambPz5qWpsq0Mmw==|base64
-QVFEMHBLMWNxY0JEQ0JBQWRYTlhmZ0FhbWJQejVxV3BzcTBNbXc9PQ==
-#or
-sh-4.2# ceph auth get-key client.admin|base64
-QVFEMHBLMWNxY0JEQ0JBQWRYTlhmZ0FhbWJQejVxV3BzcTBNbXc9PQ==
+#get  user key
+sh-4.2# ceph auth get-key client.admin
+AQD0pK1cqcBDCBAAdXNXfgAambPz5qWpsq0Mmw==
+```
+
+Example:
+
+```console
+apiVersion: v1
+kind: Secret
+metadata:
+  name: csi-rbd-secret
+  namespace: default
+stringData:
+  userID: admin
+  userKey: AQD0pK1cqcBDCBAAdXNXfgAambPz5qWpsq0Mmw==
 ```
 
 ```console
@@ -359,7 +360,7 @@ kubectl delete -f cluster/examples/kubernetes/ceph/csi/example/rbd/storageclass.
 
 This
 [storageclass](../cluster/examples/kubernetes/ceph/csi/example/cephfs/storageclass.yaml)
-expect a pool named `cephfs_data` in your Ceph cluster. You can create this
+expect a pool named `myfs-data0` in your Ceph cluster. You can create this
 pool using [rook file-system
 CRD](https://github.com/rook/rook/blob/master/Documentation/ceph-filesystem-crd.md).
 
@@ -369,7 +370,7 @@ Update the value of the `clusterID` field to match the namespace that rook is
 running in.
 
 ```console
-kubectl create -f cluster/examples/kubernetes/ceph/csi/example/cephfs/storegeclass.yaml
+kubectl create -f cluster/examples/kubernetes/ceph/csi/example/cephfs/storageclass.yaml
 ```
 
 ## Create CephFS Secret
@@ -377,17 +378,10 @@ kubectl create -f cluster/examples/kubernetes/ceph/csi/example/cephfs/storegecla
 Create a Secret that matches `provisionVolume` type specified in the [storageclass](../cluster/examples/kubernetes/ceph/csi/example/cephfs/storageclass.yaml).
 
 In [secret](../cluster/examples/kubernetes/ceph/csi/example/cephfs/secret.yaml)
-you need your Ceph admin/user ID and password encoded in base64. Encode
-admin/user ID in base64 format and replace `BASE64-ENCODED-USER`.
+you need your Ceph admin/user ID and password.
 
-```bash
-$echo -n admin|base64
-YWRtaW4=
-```
-
-Run `ceph auth ls` in your rook ceph operator pod, to encode the key of your
-admin/user run `echo -n KEY|base64`
-and replace `BASE64-ENCODED-PASSWORD` by your encoded key.
+Run `ceph auth ls` in your rook ceph operator pod, to get the key of your
+admin/user.
 
 ```bash
 kubectl exec -ti -n rook-ceph rook-ceph-operator-6c49994c4f-pwqcx /bin/sh
@@ -442,12 +436,22 @@ mgr.a
 	caps: [mon] allow *
 	caps: [osd] allow *
 
-#encode admin/user key
-sh-4.2#echo -n AQD0pK1cqcBDCBAAdXNXfgAambPz5qWpsq0Mmw==|base64
-QVFEMHBLMWNxY0JEQ0JBQWRYTlhmZ0FhbWJQejVxV3BzcTBNbXc9PQ==
-#or
-sh-4.2#ceph auth get-key client.admin|base64
-QVFEMHBLMWNxY0JEQ0JBQWRYTlhmZ0FhbWJQejVxV3BzcTBNbXc9PQ==
+#get admin/user key
+sh-4.2#ceph auth get-key client.admin
+AQD0pK1cqcBDCBAAdXNXfgAambPz5qWpsq0Mmw==
+```
+
+Example:
+
+```console
+apiVersion: v1
+kind: Secret
+metadata:
+  name: csi-cephfs-secret
+  namespace: default
+stringData:
+  adminID: admin
+  adminKey: AQD0pK1cqcBDCBAAdXNXfgAambPz5qWpsq0Mmw==
 ```
 
 ```console

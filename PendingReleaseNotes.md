@@ -6,6 +6,7 @@
 - Creation of storage pools through the custom resource definitions (CRDs) now allows users to optionally specify `deviceClass` property to enable
 distribution of the data only across the specified device class. See [Ceph Block Pool CRD](Documentation/ceph-pool-crd.md#ceph-block-pool-crd) for
 an example usage
+- Added K8s 1.15 to the test matrix and removed K8s 1.10 from the test matrix.
 - OwnerReferences are created with the fully qualified `apiVersion` such that the references will work properly on OpenShift.
 
 ### Ceph
@@ -17,6 +18,9 @@ an example usage
 - Rgw instances have their own key and thus are properly reflected in the Ceph status
 - The Rook Agent pods are now started when the CephCluster is created rather than immediately when the operator is started.
 - Ceph CRUSH tunable are not enforced to "firefly" anymore, Ceph picks the right tunable for its own version, to read more about tunable [see the Ceph documentation](http://docs.ceph.com/docs/master/rados/operations/crush-map/#tunables)
+- `NodeAffinity` can be applied to `rook-ceph-agent DaemonSet` with `AGENT_NODE_AFFINITY` environment variable.
+- `NodeAffinity` can be applied to `rook-discover DaemonSet` with `DISCOVER_AGENT_NODE_AFFINITY` environment variable.
+- Rook does not create an initial CRUSH map anymore and let Ceph do it normally
 
 ## Breaking Changes
 

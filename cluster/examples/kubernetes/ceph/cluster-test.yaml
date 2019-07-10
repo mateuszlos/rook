@@ -14,7 +14,7 @@ metadata:
   namespace: rook-ceph
 spec:
   cephVersion:
-    image: ceph/ceph:v14.2.1-20190430
+    image: ceph/daemon-base:latest-nautilus-devel
     allowUnsupported: true
   dataDirHostPath: /var/lib/rook
   mon:
@@ -22,6 +22,9 @@ spec:
     allowMultiplePerNode: true
   dashboard:
     enabled: true
+  monitoring:
+    enabled: false  # requires Prometheus to be pre-installed
+    rulesNamespace: rook-ceph
   network:
     hostNetwork: false
   rbdMirroring:

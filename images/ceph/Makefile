@@ -17,10 +17,15 @@ include ../image.mk
 # ====================================================================================
 # Image Build Options
 
-CEPH_IMAGE = $(BUILD_REGISTRY)/ceph-$(GOARCH)
-
+ifeq ($(GOARCH),amd64)
+CEPH_VERSION = latest-nautilus-devel
+BASEIMAGE = ceph/daemon-base:$(CEPH_VERSION)
+else
 CEPH_VERSION = v14.2.1-20190430
 BASEIMAGE = ceph/ceph-$(GOARCH):$(CEPH_VERSION)
+endif
+
+CEPH_IMAGE = $(BUILD_REGISTRY)/ceph-$(GOARCH)
 
 TEMP := $(shell mktemp -d)
 
@@ -34,6 +39,7 @@ do.build:
 	@cp $(OUTPUT_DIR)/bin/linux_$(GOARCH)/rook $(TEMP)
 	@cp $(OUTPUT_DIR)/bin/linux_$(GOARCH)/rookflex $(TEMP)
 	@cp -r ../../cluster/examples/kubernetes/ceph/csi/template $(TEMP)/ceph-csi
+	@cp -r ../../cluster/examples/kubernetes/ceph/monitoring $(TEMP)/ceph-monitoring
 	@cd $(TEMP) && $(SED_CMD) 's|BASEIMAGE|$(BASEIMAGE)|g' Dockerfile
 	@$(DOCKERCMD) build $(BUILD_ARGS) \
 		--build-arg ARCH=$(GOARCH) \
