@@ -29,6 +29,7 @@ import (
 	"github.com/rook/rook/pkg/daemon/ceph/agent/flexvolume"
 	"github.com/rook/rook/pkg/daemon/ceph/agent/flexvolume/attachment"
 	"github.com/rook/rook/pkg/operator/ceph/agent"
+	"github.com/rook/rook/pkg/operator/ceph/client"
 	"github.com/rook/rook/pkg/operator/ceph/cluster"
 	"github.com/rook/rook/pkg/operator/ceph/csi"
 	"github.com/rook/rook/pkg/operator/ceph/file"
@@ -77,7 +78,7 @@ type Operator struct {
 
 // New creates an operator instance
 func New(context *clusterd.Context, volumeAttachmentWrapper attachment.Attachment, rookImage, securityAccount string) *Operator {
-	schemes := []opkit.CustomResource{cluster.ClusterResource, pool.PoolResource, object.ObjectStoreResource, objectuser.ObjectStoreUserResource,
+	schemes := []opkit.CustomResource{client.ClientResource, cluster.ClusterResource, pool.PoolResource, object.ObjectStoreResource, objectuser.ObjectStoreUserResource,
 		file.FilesystemResource, attachment.VolumeResource}
 	o := &Operator{
 		context:         context,
