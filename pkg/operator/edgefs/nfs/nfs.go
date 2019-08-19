@@ -108,7 +108,7 @@ func (c *NFSController) makeNFSService(name, svcname, namespace string) *v1.Serv
 		},
 		Spec: v1.ServiceSpec{
 			Selector: labels,
-			Type:     v1.ServiceTypeNodePort,
+			Type:     v1.ServiceTypeClusterIP,
 			Ports: []v1.ServicePort{
 				{Name: "grpc", Port: 49000, Protocol: v1.ProtocolTCP},
 				{Name: "nfs-tcp", Port: 2049, Protocol: v1.ProtocolTCP},
@@ -134,6 +134,10 @@ func (c *NFSController) makeNFSService(name, svcname, namespace string) *v1.Serv
 func (c *NFSController) makeDeployment(svcname, namespace, rookImage string, nfsSpec edgefsv1beta1.NFSSpec) *apps.Deployment {
 	name := instanceName(svcname)
 	volumes := []v1.Volume{}
+
+	if c.useHostLocalTime {
+		volumes = append(volumes, edgefsv1beta1.GetHostLocalTimeVolume())
+	}
 
 	if c.dataVolumeSize.Value() > 0 {
 		// dataVolume case
@@ -209,6 +213,23 @@ func (c *NFSController) nfsContainer(svcname, name, containerImage string, nfsSp
 		},
 	}
 
+	volumeMounts := []v1.VolumeMount{
+		{
+			Name:      dataVolumeName,
+			MountPath: "/opt/nedge/etc.target",
+			SubPath:   etcVolumeFolder,
+		},
+		{
+			Name:      dataVolumeName,
+			MountPath: "/opt/nedge/var/run",
+			SubPath:   stateVolumeFolder,
+		},
+	}
+
+	if c.useHostLocalTime {
+		volumeMounts = append(volumeMounts, edgefsv1beta1.GetHostLocalTimeVolumeMount())
+	}
+
 	cont := v1.Container{
 		Name:            name,
 		Image:           containerImage,
@@ -257,18 +278,7 @@ func (c *NFSController) nfsContainer(svcname, name, containerImage string, nfsSp
 			{Name: "rquotad-tcp", ContainerPort: 875, Protocol: v1.ProtocolTCP},
 			{Name: "rquotad-udp", ContainerPort: 875, Protocol: v1.ProtocolUDP},
 		},
-		VolumeMounts: []v1.VolumeMount{
-			{
-				Name:      dataVolumeName,
-				MountPath: "/opt/nedge/etc.target",
-				SubPath:   etcVolumeFolder,
-			},
-			{
-				Name:      dataVolumeName,
-				MountPath: "/opt/nedge/var/run",
-				SubPath:   stateVolumeFolder,
-			},
-		},
+		VolumeMounts: volumeMounts,
 	}
 
 	if nfsSpec.RelaxedDirUpdates {

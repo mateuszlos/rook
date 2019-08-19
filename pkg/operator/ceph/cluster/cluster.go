@@ -24,10 +24,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rook/rook/pkg/operator/k8sutil/cmdreporter"
+
 	"github.com/google/go-cmp/cmp"
 	cephv1 "github.com/rook/rook/pkg/apis/ceph.rook.io/v1"
 	rookv1alpha2 "github.com/rook/rook/pkg/apis/rook.io/v1alpha2"
 	"github.com/rook/rook/pkg/clusterd"
+	"github.com/rook/rook/pkg/daemon/ceph/client"
 	cephconfig "github.com/rook/rook/pkg/daemon/ceph/config"
 	"github.com/rook/rook/pkg/operator/ceph/cluster/mgr"
 	"github.com/rook/rook/pkg/operator/ceph/cluster/mon"
@@ -35,7 +38,6 @@ import (
 	"github.com/rook/rook/pkg/operator/ceph/cluster/rbd"
 	cephver "github.com/rook/rook/pkg/operator/ceph/version"
 	"github.com/rook/rook/pkg/operator/k8sutil"
-	batch "k8s.io/api/batch/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -52,6 +54,7 @@ type cluster struct {
 	Namespace            string
 	Spec                 *cephv1.ClusterSpec
 	mons                 *mon.Cluster
+	initCompleted        bool
 	stopCh               chan struct{}
 	ownerRef             metav1.OwnerReference
 	orchestrationRunning bool
@@ -66,8 +69,8 @@ type childController interface {
 	ParentClusterChanged(cluster cephv1.ClusterSpec, clusterInfo *cephconfig.ClusterInfo)
 }
 
-func newCluster(c *cephv1.CephCluster, context *clusterd.Context) *cluster {
-	ownerRef := ClusterOwnerRef(c.Namespace, string(c.UID))
+func newCluster(c *cephv1.CephCluster, context *clusterd.Context, csiMutex *sync.Mutex) *cluster {
+	ownerRef := ClusterOwnerRef(c.Name, string(c.UID))
 	return &cluster{
 		// at this phase of the cluster creation process, the identity components of the cluster are
 		// not yet established. we reserve this struct which is filled in as soon as the cluster's
@@ -78,70 +81,110 @@ func newCluster(c *cephv1.CephCluster, context *clusterd.Context) *cluster {
 		context:   context,
 		stopCh:    make(chan struct{}),
 		ownerRef:  ownerRef,
-		mons:      mon.New(context, c.Namespace, c.Spec.DataDirHostPath, c.Spec.Network.HostNetwork, ownerRef),
+		mons:      mon.New(context, c.Namespace, c.Spec.DataDirHostPath, c.Spec.Network.HostNetwork, ownerRef, csiMutex),
 	}
 }
 
-func (c *cluster) detectCephVersion(image string, timeout time.Duration) (*cephver.CephVersion, error) {
-	// get the major ceph version by running "ceph --version" in the ceph image
-	podSpec := v1.PodSpec{
-		Containers: []v1.Container{
-			{
-				Command: []string{"ceph"},
-				Args:    []string{"--version"},
-				Name:    "version",
-				Image:   image,
-			},
-		},
-		RestartPolicy: v1.RestartPolicyOnFailure,
-	}
-
-	// apply "mon" placement
-	cephv1.GetMonPlacement(c.Spec.Placement).ApplyToPodSpec(&podSpec)
-
-	job := &batch.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      detectVersionName,
-			Namespace: c.Namespace,
-		},
-		Spec: batch.JobSpec{
-			Template: v1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"job": detectVersionName,
-					},
-				},
-				Spec: podSpec,
-			},
-		},
-	}
-	k8sutil.AddRookVersionLabelToJob(job)
-	k8sutil.SetOwnerRef(&job.ObjectMeta, &c.ownerRef)
-
-	// run the job to detect the version
-	if err := k8sutil.RunReplaceableJob(c.context.Clientset, job, true); err != nil {
-		return nil, fmt.Errorf("failed to start version job. %+v", err)
-	}
-
-	if err := k8sutil.WaitForJobCompletion(c.context.Clientset, job, timeout); err != nil {
-		return nil, fmt.Errorf("failed to complete version job. %+v", err)
-	}
-
-	log, err := k8sutil.GetPodLog(c.context.Clientset, c.Namespace, "job="+detectVersionName)
+// detectCephVersion loads the ceph version from the image and checks that it meets the version requirements to
+// run in the cluster
+func (c *cluster) detectCephVersion(rookImage, cephImage string, timeout time.Duration) (*cephver.CephVersion, error) {
+	logger.Infof("detecting the ceph image version for image %s...", cephImage)
+	versionReporter, err := cmdreporter.New(
+		c.context.Clientset, &c.ownerRef,
+		detectVersionName, detectVersionName, c.Namespace,
+		[]string{"ceph"}, []string{"--version"},
+		rookImage, cephImage)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get version job log to detect version. %+v", err)
+		return nil, fmt.Errorf("failed to set up ceph version job. %+v", err)
 	}
 
-	version, err := cephver.ExtractCephVersion(log)
+	job := versionReporter.Job()
+	job.Spec.Template.Spec.ServiceAccountName = "rook-ceph-cmd-reporter"
+
+	stdout, stderr, retcode, err := versionReporter.Run(timeout)
+	if err != nil {
+		return nil, fmt.Errorf("failed to complete ceph version job. %+v", err)
+	}
+	if retcode != 0 {
+		return nil, fmt.Errorf(`ceph version job returned failure with retcode %d.
+  stdout: %s
+  stderr: %s`, retcode, stdout, stderr)
+	}
+
+	version, err := cephver.ExtractCephVersion(stdout)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract ceph version. %+v", err)
 	}
-
-	// delete the job since we're done with it
-	k8sutil.DeleteBatchJob(c.context.Clientset, c.Namespace, job.Name, false)
-
 	logger.Infof("Detected ceph image version: %s", version)
 	return version, nil
+}
+
+func (c *cluster) validateCephVersion(version *cephver.CephVersion) error {
+	if !version.IsAtLeast(cephver.Minimum) {
+		return fmt.Errorf("the version does not meet the minimum version: %s", cephver.Minimum.String())
+	}
+
+	if !version.Supported() {
+		logger.Warningf("unsupported ceph version detected: %s.", version)
+		if c.Spec.CephVersion.AllowUnsupported {
+			return nil
+		}
+
+		return fmt.Errorf("allowUnsupported must be set to true to run with this version: %v", version)
+	}
+
+	// The following tries to determine if the operator can proceed with an upgrade
+	// If the cluster was unhealthy and someone injected a new image version, an upgrade was triggered but failed because the cluster is not healthy
+	// Then after this, if the operator gets restarted we are not able to fail if the cluster is not healthy, the following tries to determine the
+	// state we are in and if we should upgrade or not
+
+	// Try to load clusterInfo so we can compare the running version with the one from the spec image
+	clusterInfo, _, _, err := mon.LoadClusterInfo(c.context, c.Namespace)
+	if err == nil {
+		// Write connection info (ceph config file and keyring) for ceph commands
+		err = mon.WriteConnectionConfig(c.context, clusterInfo)
+		if err != nil {
+			logger.Errorf("failed to write config. Attempting to continue. %+v", err)
+		}
+	}
+
+	if !clusterInfo.IsInitialized() {
+		// If not initialized, this is likely a new cluster so there is nothing to do
+		return nil
+	}
+
+	// Get cluster running versions
+	versions, err := client.GetAllCephDaemonVersions(c.context, c.Namespace)
+	if err != nil {
+		logger.Errorf("failed to get ceph daemons versions. %+v", err)
+		return nil
+	}
+
+	runningVersions := *versions
+	differentImages, err := diffImageSpecAndClusterRunningVersion(*version, runningVersions)
+	if err != nil {
+		logger.Errorf("failed to determine if we should upgrade or not. %+v", err)
+		// we shouldn't block the orchestration if we can't determine the version of the image spec, we proceed anyway in best effort
+		// we won't be able to check if there is an update or not and what to do, so we don't check the cluster status either
+		// will happen if someone uses ceph/daemon:latest-master for instance
+		return nil
+	}
+
+	if differentImages {
+		// If the image version changed let's make sure we can safely upgrade
+		// check ceph's status, if not healthy we fail
+		cephHealthy := client.IsCephHealthy(c.context, c.Namespace)
+		if !cephHealthy {
+			return fmt.Errorf("ceph status in namespace %s is not healthy, refusing to upgrade. fix the cluster and re-edit the cluster CR to trigger a new orchestation update", c.Namespace)
+		}
+	}
+
+	return nil
+}
+
+// initialized checks if the cluster has ever completed a successful orchestration since the operator has started
+func (c *cluster) initialized() bool {
+	return c.initCompleted
 }
 
 func (c *cluster) createInstance(rookImage string, cephVersion cephver.CephVersion) error {
@@ -223,6 +266,7 @@ func (c *cluster) doOrchestration(rookImage string, cephVersion cephver.CephVers
 	}
 
 	logger.Infof("Done creating rook instance in namespace %s", c.Namespace)
+	c.initCompleted = true
 
 	// Notify the child controllers that the cluster spec might have changed
 	for _, child := range c.childControllers {
@@ -286,4 +330,48 @@ func (c *cluster) checkSetOrchestrationStatus() bool {
 	}
 
 	return false
+}
+
+// This function compare the Ceph spec image and the cluster running version
+// It returns false if the image is different and true if identical
+func diffImageSpecAndClusterRunningVersion(imageSpecVersion cephver.CephVersion, runningVersions client.CephDaemonsVersions) (bool, error) {
+	numberOfCephVersions := len(runningVersions.Overall)
+	if numberOfCephVersions == 0 {
+		// let's return immediatly
+		return false, fmt.Errorf("no 'overall' section in the ceph versions. %+v", runningVersions.Overall)
+	}
+
+	if numberOfCephVersions > 1 {
+		// let's return immediatly
+		logger.Warningf("it looks like we have more than one ceph version running. triggering upgrade. %+v:", runningVersions.Overall)
+		return true, nil
+	}
+
+	if numberOfCephVersions == 1 {
+		for v := range runningVersions.Overall {
+			version, err := cephver.ExtractCephVersion(v)
+			if err != nil {
+				logger.Errorf("failed to extract ceph version. %+v", err)
+				return false, err
+			}
+			clusterRunningVersion := *version
+
+			// If this is the same version
+			if cephver.IsIdentical(clusterRunningVersion, imageSpecVersion) {
+				logger.Debugf("both cluster and image spec versions are identical, doing nothing %s", imageSpecVersion.String())
+				return false, nil
+			}
+
+			if cephver.IsSuperior(imageSpecVersion, clusterRunningVersion) {
+				logger.Infof("image spec version %s is higher than the running cluster version %s, upgrading", imageSpecVersion.String(), clusterRunningVersion.String())
+				return true, nil
+			}
+
+			if cephver.IsInferior(imageSpecVersion, clusterRunningVersion) {
+				return true, fmt.Errorf("image spec version %s is lower than the running cluster version %s, downgrading is not supported", imageSpecVersion.String(), clusterRunningVersion.String())
+			}
+		}
+	}
+
+	return false, nil
 }

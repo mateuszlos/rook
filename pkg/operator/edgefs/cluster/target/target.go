@@ -40,14 +40,9 @@ const (
 	appNameFmt                = "rook-edgefs-target-%s"
 	targetLabelKey            = "edgefs-target-id"
 	defaultServiceAccountName = "rook-edgefs-cluster"
-	unknownID                 = -1
 	labelingRetries           = 5
-
-	//deployment types
-	deploymentRtlfs     = "rtlfs"
-	deploymentRtrd      = "rtrd"
-	deploymentAutoRtlfs = "autoRtlfs"
-	nodeTypeLabelFmt    = "%s-nodetype"
+	nodeTypeLabelFmt          = "%s-nodetype"
+	sleepTime                 = 5 // time beetween statefulset update check
 )
 
 // Cluster keeps track of the Targets
@@ -68,6 +63,7 @@ type Cluster struct {
 	ownerRef         metav1.OwnerReference
 	serviceAccount   string
 	deploymentConfig edgefsv1beta1.ClusterDeploymentConfig
+	useHostLocalTime bool
 }
 
 // New creates an instance of the Target manager
@@ -87,6 +83,7 @@ func New(
 	chunkCacheSize resource.Quantity,
 	ownerRef metav1.OwnerReference,
 	deploymentConfig edgefsv1beta1.ClusterDeploymentConfig,
+	useHostLocalTime bool,
 ) *Cluster {
 
 	if serviceAccount == "" {
@@ -111,6 +108,7 @@ func New(
 		chunkCacheSize:   chunkCacheSize,
 		ownerRef:         ownerRef,
 		deploymentConfig: deploymentConfig,
+		useHostLocalTime: useHostLocalTime,
 	}
 }
 
@@ -140,7 +138,7 @@ func (c *Cluster) Start(rookImage string, nodes []rookalpha.Node, dro edgefsv1be
 
 		if _, err := UpdateStatefulsetAndWait(c.context, statefulSet, c.Namespace); err != nil {
 			logger.Errorf("failed to update statefulset %s. %+v", statefulSet.Name, err)
-			return err
+			return nil
 		}
 	} else {
 		logger.Infof("stateful set %s created in namespace %s", statefulSet.Name, statefulSet.Namespace)
@@ -155,6 +153,9 @@ func UpdateStatefulsetAndWait(context *clusterd.Context, sts *appsv1.StatefulSet
 	if err != nil {
 		return nil, fmt.Errorf("failed to get statefulset %s. %+v", sts.Name, err)
 	}
+
+	// set updateTime annotation to force rolling update of Statefulset
+	sts.Spec.Template.Annotations["UpdateTime"] = time.Now().Format(time.RFC850)
 
 	_, err = context.Clientset.AppsV1().StatefulSets(namespace).Update(sts)
 	if err != nil {
@@ -171,11 +172,11 @@ func UpdateStatefulsetAndWait(context *clusterd.Context, sts *appsv1.StatefulSet
 		}
 
 		logger.Infof("Statefulset %s update in progress... status=%+v", statefulset.Name, statefulset.Status)
-		//
+		statefulsetReplicas := *statefulset.Spec.Replicas
 		if statefulset.Status.ObservedGeneration != original.Status.ObservedGeneration &&
-			statefulset.Status.UpdatedReplicas == original.Status.UpdatedReplicas &&
-			statefulset.Status.ReadyReplicas == original.Status.ReadyReplicas &&
-			statefulset.Status.CurrentReplicas == original.Status.CurrentReplicas {
+			statefulsetReplicas == statefulset.Status.ReadyReplicas &&
+			statefulsetReplicas == statefulset.Status.CurrentReplicas &&
+			statefulsetReplicas == statefulset.Status.UpdatedReplicas {
 			logger.Infof("Statefulset '%s' update is done", statefulset.Name)
 			return statefulset, nil
 		}

@@ -139,7 +139,7 @@ func (c *ISGWController) makeISGWService(name, svcname, namespace string, isgwSp
 		},
 		Spec: v1.ServiceSpec{
 			Selector: labels,
-			Type:     v1.ServiceTypeNodePort,
+			Type:     k8sutil.ParseServiceType(isgwSpec.ServiceType),
 			Ports: []v1.ServicePort{
 				{Name: "grpc", Port: 49000, Protocol: v1.ProtocolTCP},
 			},
@@ -153,8 +153,11 @@ func (c *ISGWController) makeISGWService(name, svcname, namespace string, isgwSp
 			return svc
 		}
 		lport, _ := strconv.Atoi(port)
-
-		svc.Spec.Ports = append(svc.Spec.Ports, v1.ServicePort{Name: "lport", Port: int32(lport), Protocol: v1.ProtocolTCP})
+		lportServicePort := v1.ServicePort{Name: "lport", Port: int32(lport), Protocol: v1.ProtocolTCP}
+		if isgwSpec.ExternalPort != 0 {
+			lportServicePort.NodePort = int32(isgwSpec.ExternalPort)
+		}
+		svc.Spec.Ports = append(svc.Spec.Ports, lportServicePort)
 
 		if laddr != defaultLocalIPAddr && laddr != defaultLocalIPv6Addr {
 			logger.Infof("ISGW service %s assigned with externalIP=%s", svcname, laddr)
@@ -179,6 +182,10 @@ func (c *ISGWController) makeISGWService(name, svcname, namespace string, isgwSp
 func (c *ISGWController) makeDeployment(svcname, namespace, rookImage string, isgwSpec edgefsv1beta1.ISGWSpec) *apps.Deployment {
 	name := instanceName(svcname)
 	volumes := []v1.Volume{}
+
+	if c.useHostLocalTime {
+		volumes = append(volumes, edgefsv1beta1.GetHostLocalTimeVolume())
+	}
 
 	if c.dataVolumeSize.Value() > 0 {
 		// dataVolume case
@@ -208,7 +215,7 @@ func (c *ISGWController) makeDeployment(svcname, namespace, rookImage string, is
 			Labels: getLabels(name, svcname, namespace),
 		},
 		Spec: v1.PodSpec{
-			Containers:         []v1.Container{c.isgwContainer(svcname, name, rookImage, isgwSpec)},
+			Containers:         []v1.Container{c.isgwContainer(svcname, name, edgefsv1beta1.GetModifiedRookImagePath(rookImage, "isgw"), isgwSpec)},
 			RestartPolicy:      v1.RestartPolicyAlways,
 			Volumes:            volumes,
 			HostIPC:            true,
@@ -282,6 +289,10 @@ func (c *ISGWController) isgwContainer(svcname, name, containerImage string, isg
 			MountPath: "/opt/nedge/var/run",
 			SubPath:   stateVolumeFolder,
 		},
+	}
+
+	if c.useHostLocalTime {
+		volumeMounts = append(volumeMounts, edgefsv1beta1.GetHostLocalTimeVolumeMount())
 	}
 
 	cont := v1.Container{

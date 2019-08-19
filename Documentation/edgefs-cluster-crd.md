@@ -17,7 +17,7 @@ metadata:
   name: rook-edgefs
   namespace: rook-edgefs
 spec:
-  edgefsImageName: edgefs/edgefs:1.1.8
+  edgefsImageName: edgefs/edgefs:1.2.31
   serviceAccount: rook-edgefs-cluster
   dataDirHostPath: /data
   storage:
@@ -40,7 +40,7 @@ metadata:
   name: rook-edgefs
   namespace: rook-edgefs
 spec:
-  edgefsImageName: edgefs/edgefs:1.1.8
+  edgefsImageName: edgefs/edgefs:1.2.31
   serviceAccount: rook-edgefs-cluster
   dataDirHostPath: /data
   storage:
@@ -63,7 +63,7 @@ Settings can be specified at the global level to apply to the cluster as a whole
 ### Cluster metadata
 - `name`: The name that will be used internally for the EdgeFS cluster. Most commonly the name is the same as the namespace since multiple clusters are not supported in the same namespace.
 - `namespace`: The Kubernetes namespace that will be created for the Rook cluster. The services, pods, and other resources created by the operator will be added to this namespace. The common scenario is to create a single Rook cluster. If multiple clusters are created, they must not have conflicting devices or host paths.
-- `edgefsImageName`: EdgeFS image to use. If not specified then `edgefs/edgefs:latest` is used. We recommend to specify particular image version for production use, for example `edgefs/edgefs:1.1.8`.
+- `edgefsImageName`: EdgeFS image to use. If not specified then `edgefs/edgefs:latest` is used. We recommend to specify particular image version for production use, for example `edgefs/edgefs:1.2.31`.
 
 ### Cluster Settings
 - `dataDirHostPath`: The path on the host ([hostPath](https://kubernetes.io/docs/concepts/storage/volumes/#hostpath)) where config and data should be stored for each of the services. If the directory does not exist, it will be created. Because this directory persists on the host, it will remain after pods are deleted. If `storage` settings not provided then provisioned hostPath will also be used as a storage device for Target pods (automatic provisioning via `rtlfs`).
@@ -96,6 +96,7 @@ If this value is empty, each pod will get an ephemeral directory to store their 
 - `trlogProcessingInterval`: Controls for how many seconds cluster would aggregate object modifications prior to processing it by accounting, bucket updates, ISGW Links and notifications components. Has to be defined in seconds and must be composite of 60, i.e. 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30. Default is 10. Recommended range is 2 - 20. This is cluster wide setting and cannot be easily changed after cluster is created. Any new node added has to reflect exactly the same setting.
 - `trlogKeepDays`: Controls for how many days cluster need to keep transaction log interval batches with version manifest references. If you planning to have cluster disconnected from ISGW downlinks for longer period time, consider to increase this value. Default is 7. This is cluster wide setting and cannot be easily changed after cluster is created.
 - `maxContainerCapacity`: Overrides default total disks capacity per target container. Default is "132Ti".
+- `useHostLocalTime`: Force usage of the host's /etc/localtime inside EdgeFS containers. Default is `false`.
 #### Node Updates
 Nodes can be added and removed over time by updating the Cluster CRD, for example with `kubectl -n rook-edgefs edit cluster.edgefs.rook.io rook-edgefs`.
 This will bring up your default text editor and allow you to add and remove storage nodes from the cluster.
@@ -193,7 +194,7 @@ metadata:
   name: rook-edgefs
   namespace: rook-edgefs
 spec:
-  edgefsImageName: edgefs/edgefs:1.1.8
+  edgefsImageName: edgefs/edgefs:1.2.31
   dataDirHostPath: /var/lib/rook
   serviceAccount: rook-edgefs-cluster
   # cluster level storage configuration and selection
@@ -217,7 +218,7 @@ metadata:
   name: rook-edgefs
   namespace: rook-edgefs
 spec:
-  edgefsImageName: edgefs/edgefs:1.1.8
+  edgefsImageName: edgefs/edgefs:1.2.31
   dataDirHostPath: /var/lib/rook
   serviceAccount: rook-edgefs-cluster
   # cluster level storage configuration and selection
@@ -251,7 +252,7 @@ metadata:
   name: rook-edgefs
   namespace: rook-edgefs
 spec:
-  edgefsImageName: edgefs/edgefs:1.1.8
+  edgefsImageName: edgefs/edgefs:1.2.31
   dataDirHostPath: /var/lib/rook
   serviceAccount: rook-edgefs-cluster
   placement:
@@ -286,7 +287,7 @@ metadata:
   name: rook-edgefs
   namespace: rook-edgefs
 spec:
-  edgefsImageName: edgefs/edgefs:1.1.8
+  edgefsImageName: edgefs/edgefs:1.2.31
   dataDirHostPath: /var/lib/rook
   serviceAccount: rook-edgefs-cluster
   # cluster level resource requests/limits configuration

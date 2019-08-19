@@ -121,8 +121,8 @@ func CreateOrLoadClusterInfo(context *clusterd.Context, namespace string, ownerR
 	return clusterInfo, maxMonID, monMapping, nil
 }
 
-// writeConnectionConfig save monitor connection config to disk
-func writeConnectionConfig(context *clusterd.Context, clusterInfo *cephconfig.ClusterInfo) error {
+// WriteConnectionConfig save monitor connection config to disk
+func WriteConnectionConfig(context *clusterd.Context, clusterInfo *cephconfig.ClusterInfo) error {
 	// write the latest config to the config dir
 	if err := cephconfig.GenerateAdminConnectionConfig(context, clusterInfo); err != nil {
 		return fmt.Errorf("failed to write connection config. %+v", err)
@@ -180,8 +180,32 @@ func loadMonConfig(clientset kubernetes.Interface, namespace string) (map[string
 }
 
 func createClusterAccessSecret(clientset kubernetes.Interface, namespace string, clusterInfo *cephconfig.ClusterInfo, ownerRef *metav1.OwnerReference) error {
-	logger.Infof("creating mon secrets for a new cluster")
+	logger.Infof("creating csi and mon secrets for a new cluster")
 	var err error
+
+	// Store the admin secret for the csi driver
+	csiSecrets := map[string][]byte{
+		// adminID is expected for the cephfs driver
+		"adminID":  []byte("admin"),
+		"adminKey": []byte(clusterInfo.AdminSecret),
+		// userID is expected for the cephfs driver
+		"userID":  []byte("admin"),
+		"userKey": []byte(clusterInfo.AdminSecret),
+	}
+	csiSecret := &v1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "rook-ceph-csi",
+			Namespace: namespace,
+		},
+		Data: csiSecrets,
+		Type: k8sutil.RookType,
+	}
+	k8sutil.SetOwnerRef(&csiSecret.ObjectMeta, ownerRef)
+	if _, err = clientset.CoreV1().Secrets(namespace).Create(csiSecret); err != nil {
+		if !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to save csi secret. %+v", err)
+		}
+	}
 
 	// store the secrets for internal usage of the rook pods
 	secrets := map[string][]byte{
@@ -199,7 +223,6 @@ func createClusterAccessSecret(clientset kubernetes.Interface, namespace string,
 		Type: k8sutil.RookType,
 	}
 	k8sutil.SetOwnerRef(&secret.ObjectMeta, ownerRef)
-
 	if _, err = clientset.CoreV1().Secrets(namespace).Create(secret); err != nil {
 		return fmt.Errorf("failed to save mon secrets. %+v", err)
 	}

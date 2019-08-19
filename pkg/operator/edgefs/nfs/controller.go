@@ -22,6 +22,7 @@ import (
 	"reflect"
 
 	"github.com/coreos/pkg/capnslog"
+	"github.com/google/go-cmp/cmp"
 	opkit "github.com/rook/operator-kit"
 	edgefsv1beta1 "github.com/rook/rook/pkg/apis/edgefs.rook.io/v1beta1"
 	rookalpha "github.com/rook/rook/pkg/apis/rook.io/v1alpha2"
@@ -52,17 +53,18 @@ var NFSResource = opkit.CustomResource{
 
 // NFSController represents a controller object for nfs custom resources
 type NFSController struct {
-	context         *clusterd.Context
-	namespace       string
-	rookImage       string
-	hostNetwork     bool
-	dataDirHostPath string
-	dataVolumeSize  resource.Quantity
-	annotations     rookalpha.Annotations
-	placement       rookalpha.Placement
-	resources       v1.ResourceRequirements
-	resourceProfile string
-	ownerRef        metav1.OwnerReference
+	context          *clusterd.Context
+	namespace        string
+	rookImage        string
+	hostNetwork      bool
+	dataDirHostPath  string
+	dataVolumeSize   resource.Quantity
+	annotations      rookalpha.Annotations
+	placement        rookalpha.Placement
+	resources        v1.ResourceRequirements
+	resourceProfile  string
+	ownerRef         metav1.OwnerReference
+	useHostLocalTime bool
 }
 
 // NewNFSController create controller for watching nfs custom resources created
@@ -77,18 +79,20 @@ func NewNFSController(
 	resources v1.ResourceRequirements,
 	resourceProfile string,
 	ownerRef metav1.OwnerReference,
+	useHostLocalTime bool,
 ) *NFSController {
 	return &NFSController{
-		context:         context,
-		namespace:       namespace,
-		rookImage:       rookImage,
-		hostNetwork:     hostNetwork,
-		dataDirHostPath: dataDirHostPath,
-		dataVolumeSize:  dataVolumeSize,
-		placement:       placement,
-		resources:       resources,
-		resourceProfile: resourceProfile,
-		ownerRef:        ownerRef,
+		context:          context,
+		namespace:        namespace,
+		rookImage:        rookImage,
+		hostNetwork:      hostNetwork,
+		dataDirHostPath:  dataDirHostPath,
+		dataVolumeSize:   dataVolumeSize,
+		placement:        placement,
+		resources:        resources,
+		resourceProfile:  resourceProfile,
+		ownerRef:         ownerRef,
+		useHostLocalTime: useHostLocalTime,
 	}
 }
 
@@ -188,6 +192,28 @@ func (c *NFSController) serviceOwners(service *edgefsv1beta1.NFS) []metav1.Owner
 }
 
 func serviceChanged(oldService, newService edgefsv1beta1.NFSSpec) bool {
+
+	var diff string
+	// any change in the crd will trigger an orchestration
+	if !reflect.DeepEqual(oldService, newService) {
+		func() {
+			defer func() {
+				if err := recover(); err != nil {
+					logger.Warningf("Encountered an issue getting nfs service change differences: %v", err)
+				}
+			}()
+
+			// resource.Quantity has non-exportable fields, so we use its comparator method
+			resourceQtyComparer := cmp.Comparer(func(x, y resource.Quantity) bool { return x.Cmp(y) == 0 })
+			diff = cmp.Diff(oldService, newService, resourceQtyComparer)
+			logger.Infof("The NFS Service has changed. diff=%s", diff)
+		}()
+	}
+
+	if len(diff) > 0 {
+		return true
+	}
+
 	return false
 }
 

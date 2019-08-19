@@ -115,7 +115,7 @@ func (c *ISCSIController) makeISCSIService(name, svcname, namespace string, iscs
 		},
 		Spec: v1.ServiceSpec{
 			Selector: labels,
-			Type:     v1.ServiceTypeNodePort,
+			Type:     v1.ServiceTypeClusterIP,
 			Ports: []v1.ServicePort{
 				{Name: "grpc", Port: 49000, Protocol: v1.ProtocolTCP},
 				{Name: "port", Port: defaultPort, Protocol: v1.ProtocolTCP},
@@ -130,6 +130,10 @@ func (c *ISCSIController) makeISCSIService(name, svcname, namespace string, iscs
 func (c *ISCSIController) makeDeployment(svcname, namespace, rookImage string, iscsiSpec edgefsv1beta1.ISCSISpec) *apps.Deployment {
 	name := instanceName(svcname)
 	volumes := []v1.Volume{}
+
+	if c.useHostLocalTime {
+		volumes = append(volumes, edgefsv1beta1.GetHostLocalTimeVolume())
+	}
 
 	if c.dataVolumeSize.Value() > 0 {
 		// dataVolume case
@@ -218,6 +222,10 @@ func (c *ISCSIController) iscsiContainer(svcname, name, containerImage string, i
 			MountPath: "/opt/nedge/var/run",
 			SubPath:   stateVolumeFolder,
 		},
+	}
+
+	if c.useHostLocalTime {
+		volumeMounts = append(volumeMounts, edgefsv1beta1.GetHostLocalTimeVolumeMount())
 	}
 
 	cont := v1.Container{

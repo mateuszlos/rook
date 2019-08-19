@@ -1,3 +1,19 @@
+/*
+Copyright 2019 The Rook Authors. All rights reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package version
 
 import (
@@ -10,7 +26,6 @@ import (
 func TestToString(t *testing.T) {
 	assert.Equal(t, "14.0.0 nautilus", fmt.Sprintf("%s", &Nautilus))
 	assert.Equal(t, "13.0.0 mimic", fmt.Sprintf("%s", &Mimic))
-	assert.Equal(t, "12.0.0 luminous", fmt.Sprintf("%s", &Luminous))
 
 	expected := fmt.Sprintf("-1.0.0 %s", unknownVersionString)
 	assert.Equal(t, expected, fmt.Sprintf("%s", &CephVersion{-1, 0, 0}))
@@ -19,13 +34,11 @@ func TestToString(t *testing.T) {
 func TestCephVersionFormatted(t *testing.T) {
 	assert.Equal(t, "ceph version 14.0.0 nautilus", Nautilus.CephVersionFormatted())
 	assert.Equal(t, "ceph version 13.0.0 mimic", Mimic.CephVersionFormatted())
-	assert.Equal(t, "ceph version 12.0.0 luminous", Luminous.CephVersionFormatted())
 }
 
 func TestReleaseName(t *testing.T) {
 	assert.Equal(t, "nautilus", Nautilus.ReleaseName())
 	assert.Equal(t, "mimic", Mimic.ReleaseName())
-	assert.Equal(t, "luminous", Luminous.ReleaseName())
 	ver := CephVersion{-1, 0, 0}
 	assert.Equal(t, unknownVersionString, ver.ReleaseName())
 }
@@ -39,13 +52,13 @@ func extractVersionHelper(t *testing.T, text string, major, minor, extra int) {
 
 func TestExtractVersion(t *testing.T) {
 	// release build
-	v0c := "ceph version 12.2.8 (ae699615bac534ea496ee965ac6192cb7e0e07c0) luminous (stable)"
+	v0c := "ceph version 13.2.6 (ae699615bac534ea496ee965ac6192cb7e0e07c1) mimic (stable)"
 	v0d := `
 root@7a97f5a78bc6:/# ceph --version
-ceph version 12.2.8 (ae699615bac534ea496ee965ac6192cb7e0e07c0) luminous (stable)
+ceph version 13.2.6 (ae699615bac534ea496ee965ac6192cb7e0e07c1) mimic (stable)
 `
-	extractVersionHelper(t, v0c, 12, 2, 8)
-	extractVersionHelper(t, v0d, 12, 2, 8)
+	extractVersionHelper(t, v0c, 13, 2, 6)
+	extractVersionHelper(t, v0d, 13, 2, 6)
 
 	// development build
 	v1c := "ceph version 14.1.33-403-g7ba6bece41"
@@ -89,18 +102,10 @@ func TestSupported(t *testing.T) {
 }
 
 func TestIsRelease(t *testing.T) {
-	assert.True(t, Luminous.isRelease(Luminous))
 	assert.True(t, Mimic.isRelease(Mimic))
 	assert.True(t, Nautilus.isRelease(Nautilus))
 
-	assert.False(t, Luminous.isRelease(Mimic))
-	assert.False(t, Luminous.isRelease(Nautilus))
 	assert.False(t, Mimic.isRelease(Nautilus))
-
-	LuminousUpdate := Luminous
-	LuminousUpdate.Minor = 33
-	LuminousUpdate.Extra = 4
-	assert.True(t, LuminousUpdate.isRelease(Luminous))
 
 	MimicUpdate := Mimic
 	MimicUpdate.Minor = 33
@@ -114,31 +119,18 @@ func TestIsRelease(t *testing.T) {
 }
 
 func TestIsReleaseX(t *testing.T) {
-	assert.True(t, Luminous.IsLuminous())
-	assert.False(t, Mimic.IsLuminous())
-	assert.False(t, Nautilus.IsLuminous())
-	assert.False(t, Octopus.IsLuminous())
-
-	assert.False(t, Luminous.IsMimic())
 	assert.True(t, Mimic.IsMimic())
 	assert.False(t, Nautilus.IsMimic())
 	assert.False(t, Octopus.IsMimic())
 }
 
 func TestVersionAtLeast(t *testing.T) {
-	assert.True(t, Luminous.IsAtLeast(Luminous))
-	assert.False(t, Luminous.IsAtLeast(Mimic))
-	assert.False(t, Luminous.IsAtLeast(Nautilus))
-	assert.False(t, Luminous.IsAtLeast(Octopus))
-	assert.True(t, Mimic.IsAtLeast(Luminous))
 	assert.True(t, Mimic.IsAtLeast(Mimic))
 	assert.False(t, Mimic.IsAtLeast(Nautilus))
 	assert.False(t, Mimic.IsAtLeast(Octopus))
-	assert.True(t, Nautilus.IsAtLeast(Luminous))
 	assert.True(t, Nautilus.IsAtLeast(Mimic))
 	assert.True(t, Nautilus.IsAtLeast(Nautilus))
 	assert.False(t, Nautilus.IsAtLeast(Octopus))
-	assert.True(t, Octopus.IsAtLeast(Luminous))
 	assert.True(t, Octopus.IsAtLeast(Mimic))
 	assert.True(t, Octopus.IsAtLeast(Nautilus))
 	assert.True(t, Octopus.IsAtLeast(Octopus))
@@ -159,8 +151,27 @@ func TestVersionAtLeastX(t *testing.T) {
 	assert.True(t, Nautilus.IsAtLeastNautilus())
 	assert.True(t, Nautilus.IsAtLeastMimic())
 	assert.True(t, Mimic.IsAtLeastMimic())
-	assert.False(t, Luminous.IsAtLeastMimic())
-	assert.False(t, Luminous.IsAtLeastNautilus())
 	assert.False(t, Mimic.IsAtLeastNautilus())
 	assert.False(t, Nautilus.IsAtLeastOctopus())
+}
+
+func TestIsIdentical(t *testing.T) {
+	assert.True(t, IsIdentical(CephVersion{14, 2, 2}, CephVersion{14, 2, 2}))
+	assert.False(t, IsIdentical(CephVersion{14, 2, 2}, CephVersion{15, 2, 2}))
+}
+
+func TestIsSuperior(t *testing.T) {
+	assert.False(t, IsSuperior(CephVersion{14, 2, 2}, CephVersion{14, 2, 2}))
+	assert.False(t, IsSuperior(CephVersion{14, 2, 2}, CephVersion{15, 2, 2}))
+	assert.True(t, IsSuperior(CephVersion{15, 2, 2}, CephVersion{14, 2, 2}))
+	assert.True(t, IsSuperior(CephVersion{15, 2, 2}, CephVersion{15, 1, 3}))
+	assert.True(t, IsSuperior(CephVersion{15, 2, 2}, CephVersion{15, 2, 1}))
+}
+
+func TestIsInferior(t *testing.T) {
+	assert.False(t, IsInferior(CephVersion{14, 2, 2}, CephVersion{14, 2, 2}))
+	assert.False(t, IsInferior(CephVersion{15, 2, 2}, CephVersion{14, 2, 2}))
+	assert.True(t, IsInferior(CephVersion{14, 2, 2}, CephVersion{15, 2, 2}))
+	assert.True(t, IsInferior(CephVersion{15, 1, 3}, CephVersion{15, 2, 2}))
+	assert.True(t, IsInferior(CephVersion{15, 2, 1}, CephVersion{15, 2, 2}))
 }

@@ -52,7 +52,7 @@ export CLUSTER_NAME="rook-edgefs"
 The majority of the upgrade will be handled by the Rook operator. Begin the upgrade by changing the
 EdgeFS image field in the cluster CRD (`spec:edgefsImageName`).
 ```sh
-NEW_EDGEFS_IMAGE='edgefs/edgefs:1.1.212'
+NEW_EDGEFS_IMAGE='edgefs/edgefs:1.2.31'
 kubectl -n $CLUSTER_NAME patch Cluster $CLUSTER_NAME --type=merge \
   -p "{\"spec\": {\"edgefsImageName\": \"$NEW_EDGEFS_IMAGE\"}}"
 ```
@@ -73,13 +73,13 @@ version has fully updated is rather simple.
 kubectl -n $CLUSTER_NAME describe pods | grep "Image:" | sort | uniq
 # This cluster is not yet finished:
 #      Image:         edgefs/edgefs:1.1.50
-#      Image:         edgefs/edgefs:1.1.212
-#      Image:         edgefs/edgefs-restapi:1.1.212
-#      Image:         edgefs/edgefs-ui:1.1.212
+#      Image:         edgefs/edgefs:1.2.31
+#      Image:         edgefs/edgefs-restapi:1.2.31
+#      Image:         edgefs/edgefs-ui:1.2.31
 # This cluster is also finished(all versions are the same):
-#      Image:         edgefs/edgefs:1.1.212
-#      Image:         edgefs/edgefs-restapi:1.1.212
-#      Image:         edgefs/edgefs-ui:1.1.212
+#      Image:         edgefs/edgefs:1.2.31
+#      Image:         edgefs/edgefs-restapi:1.2.31
+#      Image:         edgefs/edgefs-ui:1.2.31
 ```
 #### 3. Verify the updated cluster
 
@@ -90,4 +90,30 @@ kubectl exec -it -n $CLUSTER_NAME rook-edgefs-mgr-xxxx-xxx -- toolbox
 efscli system status -v 1
 ```
 
+## EdgeFS Nodes update
+Nodes can be added and removed over time by updating the Cluster CRD, for example with `kubectl edit Cluster -n rook-edgefs`.
+This will bring up your default text editor and allow you to add and remove storage nodes from the cluster.
+This feature is only available when `useAllNodes` has been set to `false` and `resurrect` mode is not used.
 
+### 1. Add node example
+#### a. Edit Cluster CRD `kubectl edit Cluster -n rook-edgefs`
+
+#### b. Add new node section with desired configuration in storage section of Cluster CRD
+
+Currently we adding new node `node3072ub16` with two drives `sdb` and `sdc` on it.
+
+```yaml
+    - config: null
+      devices:
+      - FullPath: ""
+        config: null
+        name: sdb
+      - FullPath: ""
+        config: null
+        name: sdc
+      name: node3072ub16
+      resources: {}
+```
+#### c. Save CRD and operator will update all target nodes and related pods of the EdgeFS cluster.
+
+#### d. Login to EdgeFS mgr toolbox and adjust FlexHash table to a new configuration using `efscli system fhtable` command.

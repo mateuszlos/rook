@@ -18,13 +18,14 @@ package target
 
 import (
 	"fmt"
+	"strconv"
+
 	edgefsv1beta1 "github.com/rook/rook/pkg/apis/edgefs.rook.io/v1beta1"
 	"github.com/rook/rook/pkg/operator/edgefs/cluster/target/config"
 	"github.com/rook/rook/pkg/operator/k8sutil"
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"strconv"
 )
 
 const (
@@ -80,6 +81,10 @@ func (c *Cluster) makeCorosyncContainer(containerImage string) v1.Container {
 		},
 	}
 
+	if c.useHostLocalTime {
+		volumeMounts = append(volumeMounts, edgefsv1beta1.GetHostLocalTimeVolumeMount())
+	}
+
 	return v1.Container{
 		Name:            "corosync",
 		Image:           containerImage,
@@ -95,6 +100,10 @@ func (c *Cluster) makeCorosyncContainer(containerImage string) v1.Container {
 						FieldPath: "spec.nodeName",
 					},
 				},
+			},
+			{
+				Name:  "K8S_NAMESPACE",
+				Value: c.Namespace,
 			},
 		},
 	}
@@ -122,6 +131,10 @@ func (c *Cluster) makeAuditdContainer(containerImage string) v1.Container {
 			MountPath: "/opt/nedge/var/run",
 			SubPath:   stateVolumeFolder,
 		},
+	}
+
+	if c.useHostLocalTime {
+		volumeMounts = append(volumeMounts, edgefsv1beta1.GetHostLocalTimeVolumeMount())
 	}
 
 	return v1.Container{
@@ -199,6 +212,11 @@ func (c *Cluster) makeDaemonContainer(containerImage string, dro edgefsv1beta1.D
 			SubPath:   stateVolumeFolderVar,
 		},
 	}
+
+	if c.useHostLocalTime {
+		volumeMounts = append(volumeMounts, edgefsv1beta1.GetHostLocalTimeVolumeMount())
+	}
+
 	if containerSlaveIndex > 0 {
 		volumeMounts = append(volumeMounts, []v1.VolumeMount{
 			{
@@ -291,7 +309,7 @@ func (c *Cluster) makeDaemonContainer(containerImage string, dro edgefsv1beta1.D
 		VolumeMounts:    volumeMounts,
 	}
 
-	// Do not define Liveness and Reasiness probe for init container
+	// Do not define Liveness and Readiness probe for init container
 	if !isInitContainer {
 		cont.LivenessProbe = c.getLivenessProbe()
 		cont.ReadinessProbe = c.getReadinessProbe()
@@ -381,6 +399,10 @@ func (c *Cluster) createPodSpec(rookImage string, dro edgefsv1beta1.DevicesResur
 		},
 	}
 
+	if c.useHostLocalTime {
+		volumes = append(volumes, edgefsv1beta1.GetHostLocalTimeVolume())
+	}
+
 	hostPathDirectoryOrCreate := v1.HostPathDirectoryOrCreate
 	if c.dataVolumeSize.Value() > 0 {
 		// dataVolume case
@@ -406,7 +428,7 @@ func (c *Cluster) createPodSpec(rookImage string, dro edgefsv1beta1.DevicesResur
 
 	if c.deploymentConfig.DeploymentType == edgefsv1beta1.DeploymentRtlfs {
 		// RTLFS with specified folders
-		for _, folder := range c.deploymentConfig.Directories {
+		for _, folder := range c.deploymentConfig.GetRtlfsDevices() {
 			volumes = append(volumes, v1.Volume{
 				Name: folder.Name,
 				VolumeSource: v1.VolumeSource{
@@ -438,7 +460,7 @@ func (c *Cluster) createPodSpec(rookImage string, dro edgefsv1beta1.DevicesResur
 	}
 
 	if len(c.deploymentConfig.DevConfig) > 0 {
-		// Get first element of DevConfigMap map, because container lenght MUST be identical fot EACH node in EdgeFS cluster
+		// Get first element of DevConfigMap map, because container length MUST be identical for EACH node in EdgeFS cluster
 		for _, devConfig := range c.deploymentConfig.DevConfig {
 			// Skip GW, it has no rtrd or rtrdslaves
 			if devConfig.IsGatewayNode {

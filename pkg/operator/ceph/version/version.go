@@ -1,3 +1,19 @@
+/*
+Copyright 2019 The Rook Authors. All rights reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package version
 
 import (
@@ -18,8 +34,8 @@ const (
 )
 
 var (
-	// Luminous Ceph version
-	Luminous = CephVersion{12, 0, 0}
+	// Minimum supported version is 13.2.4 where ceph-volume is supported
+	Minimum = CephVersion{13, 2, 4}
 	// Mimic Ceph version
 	Mimic = CephVersion{13, 0, 0}
 	// Nautilus Ceph version
@@ -28,7 +44,7 @@ var (
 	Octopus = CephVersion{15, 0, 0}
 
 	// supportedVersions are production-ready versions that rook supports
-	supportedVersions   = []CephVersion{Luminous, Mimic, Nautilus}
+	supportedVersions   = []CephVersion{Mimic, Nautilus}
 	unsupportedVersions = []CephVersion{Octopus}
 	// allVersions includes all supportedVersions as well as unreleased versions that are being tested with rook
 	allVersions = append(supportedVersions, unsupportedVersions...)
@@ -57,8 +73,6 @@ func (v *CephVersion) ReleaseName() string {
 		return "nautilus"
 	case Mimic.Major:
 		return "mimic"
-	case Luminous.Major:
-		return "luminous"
 	default:
 		return unknownVersionString
 	}
@@ -103,11 +117,6 @@ func (v *CephVersion) isRelease(other CephVersion) bool {
 	return v.Major == other.Major
 }
 
-// IsLuminous checks if the Ceph version is Luminous
-func (v *CephVersion) IsLuminous() bool {
-	return v.isRelease(Luminous)
-}
-
 // IsMimic checks if the Ceph version is Mimic
 func (v *CephVersion) IsMimic() bool {
 	return v.isRelease(Mimic)
@@ -149,4 +158,59 @@ func (v *CephVersion) IsAtLeastNautilus() bool {
 // IsAtLeastMimic check that the Ceph version is at least Mimic
 func (v *CephVersion) IsAtLeastMimic() bool {
 	return v.IsAtLeast(Mimic)
+}
+
+// IsIdentical checks if Ceph versions are identical
+func IsIdentical(a, b CephVersion) bool {
+	if a.Major == b.Major {
+		if a.Minor == b.Minor {
+			if a.Extra == b.Extra {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// IsSuperior checks if a given version if superior to another one
+func IsSuperior(a, b CephVersion) bool {
+	if a.Major > b.Major {
+		return true
+	}
+	if a.Major == b.Major {
+		if a.Minor > b.Minor {
+			return true
+		}
+	}
+	if a.Major == b.Major {
+		if a.Minor == b.Minor {
+			if a.Extra > b.Extra {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// IsInferior checks if a given version if inferior to another one
+func IsInferior(a, b CephVersion) bool {
+	if a.Major < b.Major {
+		return true
+	}
+	if a.Major == b.Major {
+		if a.Minor < b.Minor {
+			return true
+		}
+	}
+	if a.Major == b.Major {
+		if a.Minor == b.Minor {
+			if a.Extra < b.Extra {
+				return true
+			}
+		}
+	}
+
+	return false
 }

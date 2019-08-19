@@ -79,17 +79,16 @@ func NewClusterController(context *clusterd.Context, containerImage string) *Clu
 	return &ClusterController{
 		context:        context,
 		containerImage: containerImage,
-		//createInitRetryInterval: createInitRetryIntervalDefault,
-		clusterMap: make(map[string]*cluster),
+		clusterMap:     make(map[string]*cluster),
 	}
 }
 
-func ClusterOwnerRef(namespace, clusterID string) metav1.OwnerReference {
+func ClusterOwnerRef(clusterName, clusterID string) metav1.OwnerReference {
 	blockOwner := true
 	return metav1.OwnerReference{
 		APIVersion:         fmt.Sprintf("%s/%s", ClusterResource.Group, ClusterResource.Version),
 		Kind:               ClusterResource.Kind,
-		Name:               namespace,
+		Name:               clusterName,
 		UID:                types.UID(clusterID),
 		BlockOwnerDeletion: &blockOwner,
 	}
@@ -133,11 +132,7 @@ func (c *ClusterController) onAdd(obj interface{}) {
 	logger.Infof("starting cluster in namespace %s", cluster.Namespace)
 
 	if c.devicesInUse && cluster.Spec.Storage.AnyUseAllDevices() {
-		message := "using all devices in more than one namespace not supported"
-		logger.Error(message)
-		if err := c.updateClusterStatus(clusterObj.Namespace, clusterObj.Name, edgefsv1beta1.ClusterStateError, message); err != nil {
-			logger.Errorf("failed to update cluster status in namespace %s: %+v", cluster.Namespace, err)
-		}
+		c.updateClusterStatus(clusterObj.Namespace, clusterObj.Name, edgefsv1beta1.ClusterStateError, "using all devices in more than one namespace is not supported")
 		return
 	}
 
@@ -147,10 +142,7 @@ func (c *ClusterController) onAdd(obj interface{}) {
 
 	// Start the Rook cluster components. Retry several times in case of failure.
 	err := wait.Poll(clusterCreateInterval, clusterCreateTimeout, func() (bool, error) {
-		if err := c.updateClusterStatus(clusterObj.Namespace, clusterObj.Name, edgefsv1beta1.ClusterStateCreating, ""); err != nil {
-			logger.Errorf("failed to update cluster status in namespace %s: %+v", cluster.Namespace, err)
-			return false, nil
-		}
+		c.updateClusterStatus(clusterObj.Namespace, clusterObj.Name, edgefsv1beta1.ClusterStateCreating, "")
 
 		err := cluster.createInstance(c.containerImage, false)
 		if err != nil {
@@ -159,19 +151,13 @@ func (c *ClusterController) onAdd(obj interface{}) {
 		}
 
 		// cluster is created, update the cluster CRD status now
-		if err := c.updateClusterStatus(clusterObj.Namespace, clusterObj.Name, edgefsv1beta1.ClusterStateCreated, ""); err != nil {
-			logger.Errorf("failed to update cluster status in namespace %s: %+v", cluster.Namespace, err)
-			return false, nil
-		}
+		c.updateClusterStatus(clusterObj.Namespace, clusterObj.Name, edgefsv1beta1.ClusterStateCreated, "")
 
 		return true, nil
 	})
 	if err != nil {
-		message := fmt.Sprintf("giving up creating cluster in namespace %s after %s", cluster.Namespace, clusterCreateTimeout)
-		logger.Error(message)
-		if err := c.updateClusterStatus(clusterObj.Namespace, clusterObj.Name, edgefsv1beta1.ClusterStateError, message); err != nil {
-			logger.Errorf("failed to update cluster status in namespace %s: %+v", cluster.Namespace, err)
-		}
+		c.updateClusterStatus(clusterObj.Namespace, clusterObj.Name, edgefsv1beta1.ClusterStateError,
+			fmt.Sprintf("giving up creating cluster in namespace %s after %s", cluster.Namespace, clusterCreateTimeout))
 		return
 	}
 
@@ -186,7 +172,8 @@ func (c *ClusterController) onAdd(obj interface{}) {
 		edgefsv1beta1.GetTargetPlacement(cluster.Spec.Placement),
 		cluster.Spec.Resources,
 		cluster.Spec.ResourceProfile,
-		cluster.ownerRef)
+		cluster.ownerRef,
+		cluster.Spec.UseHostLocalTime)
 	NFSController.StartWatch(cluster.stopCh)
 
 	// Start S3 service CRD watcher
@@ -198,7 +185,8 @@ func (c *ClusterController) onAdd(obj interface{}) {
 		edgefsv1beta1.GetTargetPlacement(cluster.Spec.Placement),
 		cluster.Spec.Resources,
 		cluster.Spec.ResourceProfile,
-		cluster.ownerRef)
+		cluster.ownerRef,
+		cluster.Spec.UseHostLocalTime)
 	S3Controller.StartWatch(cluster.stopCh)
 
 	// Start SWIFT service CRD watcher
@@ -210,7 +198,8 @@ func (c *ClusterController) onAdd(obj interface{}) {
 		edgefsv1beta1.GetTargetPlacement(cluster.Spec.Placement),
 		cluster.Spec.Resources,
 		cluster.Spec.ResourceProfile,
-		cluster.ownerRef)
+		cluster.ownerRef,
+		cluster.Spec.UseHostLocalTime)
 	SWIFTController.StartWatch(cluster.stopCh)
 
 	// Start S3X service CRD watcher
@@ -222,7 +211,8 @@ func (c *ClusterController) onAdd(obj interface{}) {
 		edgefsv1beta1.GetTargetPlacement(cluster.Spec.Placement),
 		cluster.Spec.Resources,
 		cluster.Spec.ResourceProfile,
-		cluster.ownerRef)
+		cluster.ownerRef,
+		cluster.Spec.UseHostLocalTime)
 	S3XController.StartWatch(cluster.stopCh)
 
 	// Start ISCSI service CRD watcher
@@ -234,7 +224,8 @@ func (c *ClusterController) onAdd(obj interface{}) {
 		edgefsv1beta1.GetTargetPlacement(cluster.Spec.Placement),
 		cluster.Spec.Resources,
 		cluster.Spec.ResourceProfile,
-		cluster.ownerRef)
+		cluster.ownerRef,
+		cluster.Spec.UseHostLocalTime)
 	ISCSIController.StartWatch(cluster.stopCh)
 
 	// Start ISGW service CRD watcher
@@ -246,7 +237,8 @@ func (c *ClusterController) onAdd(obj interface{}) {
 		edgefsv1beta1.GetTargetPlacement(cluster.Spec.Placement),
 		cluster.Spec.Resources,
 		cluster.Spec.ResourceProfile,
-		cluster.ownerRef)
+		cluster.ownerRef,
+		cluster.Spec.UseHostLocalTime)
 	ISGWController.StartWatch(cluster.stopCh)
 
 	cluster.childControllers = []childController{
@@ -286,8 +278,8 @@ func (c *ClusterController) onUpdate(oldObj, newObj interface{}) {
 	}
 
 	logger.Infof("update event for cluster %s is supported, orchestrating update now", newCluster.Namespace)
-	logger.Infof("old cluster: %+v", oldCluster.Spec)
-	logger.Infof("new cluster: %+v", newCluster.Spec)
+	logger.Debugf("old cluster: %+v", oldCluster.Spec)
+	logger.Debugf("new cluster: %+v", newCluster.Spec)
 
 	cluster, ok := c.clusterMap[newCluster.Namespace]
 	if !ok {
@@ -307,21 +299,15 @@ func (c *ClusterController) onUpdate(oldObj, newObj interface{}) {
 		return c.handleUpdate(newCluster, cluster)
 	})
 	if err != nil {
-		message := fmt.Sprintf("giving up trying to update cluster in namespace %s after %s", cluster.Namespace, updateClusterTimeout)
-		logger.Error(message)
-		if err := c.updateClusterStatus(newCluster.Namespace, newCluster.Name, edgefsv1beta1.ClusterStateError, message); err != nil {
-			logger.Errorf("failed to update cluster status in namespace %s: %+v", newCluster.Namespace, err)
-		}
+		c.updateClusterStatus(newCluster.Namespace, newCluster.Name, edgefsv1beta1.ClusterStateError,
+			fmt.Sprintf("giving up trying to update cluster in namespace %s after %s", cluster.Namespace, updateClusterTimeout))
 		return
 	}
 	logger.Infof("cluster %s updated in namespace %s", newCluster.Name, newCluster.Namespace)
 }
 
 func (c *ClusterController) handleUpdate(newClust *edgefsv1beta1.Cluster, cluster *cluster) (bool, error) {
-	if err := c.updateClusterStatus(newClust.Namespace, newClust.Name, edgefsv1beta1.ClusterStateUpdating, ""); err != nil {
-		logger.Errorf("failed to update cluster status in namespace %s: %+v", newClust.Namespace, err)
-		return false, nil
-	}
+	c.updateClusterStatus(newClust.Namespace, newClust.Name, edgefsv1beta1.ClusterStateUpdating, "")
 
 	if newClust.Spec.EdgefsImageName != "" {
 		c.containerImage = newClust.Spec.EdgefsImageName
@@ -332,10 +318,7 @@ func (c *ClusterController) handleUpdate(newClust *edgefsv1beta1.Cluster, cluste
 		return false, nil
 	}
 
-	if err := c.updateClusterStatus(newClust.Namespace, newClust.Name, edgefsv1beta1.ClusterStateCreated, ""); err != nil {
-		logger.Errorf("failed to update cluster status in namespace %s: %+v", newClust.Namespace, err)
-		return false, nil
-	}
+	c.updateClusterStatus(newClust.Namespace, newClust.Name, edgefsv1beta1.ClusterStateCreated, "")
 
 	logger.Infof("succeeded updating cluster in namespace %s", newClust.Namespace)
 	return true, nil
@@ -375,29 +358,26 @@ func (c *ClusterController) handleDelete(clust *edgefsv1beta1.Cluster, retryInte
 	}
 
 	for _, node := range cluster.targets.Storage.Nodes {
-		k := cluster.Namespace
-		err := cluster.RemoveLabelOffNode(cluster.context.Clientset, node.Name, []string{k})
-		logger.Infof("removed label %s from %s: %+v", k, node.Name, err)
+		cluster.UnlabelTargetNode(node.Name)
 	}
 
 	// delete associated node labels
 	return nil
 }
 
-func (c *ClusterController) updateClusterStatus(namespace, name string, state edgefsv1beta1.ClusterState, message string) error {
+func (c *ClusterController) updateClusterStatus(namespace, name string, state edgefsv1beta1.ClusterState, message string) {
 	// get the most recent cluster CRD object
 	cluster, err := c.context.RookClientset.EdgefsV1beta1().Clusters(namespace).Get(name, metav1.GetOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to get cluster from namespace %s prior to updating its status: %+v", namespace, err)
+		logger.Errorf("failed to get cluster from namespace %s prior to updating its status: %+v", namespace, err)
+		return
 	}
 
 	// update the status on the retrieved cluster object
 	cluster.Status = edgefsv1beta1.ClusterStatus{State: state, Message: message}
 	if _, err := c.context.RookClientset.EdgefsV1beta1().Clusters(cluster.Namespace).Update(cluster); err != nil {
-		return fmt.Errorf("failed to update cluster %s status: %+v", cluster.Namespace, err)
+		logger.Errorf("failed to update cluster %s status: %+v", cluster.Namespace, err)
 	}
-
-	return nil
 }
 
 func isHostNetworkDefined(hostNetworkSpec edgefsv1beta1.NetworkSpec) bool {

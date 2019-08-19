@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
-	"strings"
+	"time"
 
 	"github.com/coreos/pkg/capnslog"
 	edgefsv1beta1 "github.com/rook/rook/pkg/apis/edgefs.rook.io/v1beta1"
@@ -57,20 +57,21 @@ const (
 
 // Cluster is the edgefs mgr manager
 type Cluster struct {
-	Namespace       string
-	Version         string
-	serviceAccount  string
-	Replicas        int
-	dataDirHostPath string
-	dataVolumeSize  resource.Quantity
-	annotations     rookalpha.Annotations
-	placement       rookalpha.Placement
-	context         *clusterd.Context
-	hostNetworkSpec edgefsv1beta1.NetworkSpec
-	dashboardSpec   edgefsv1beta1.DashboardSpec
-	resources       v1.ResourceRequirements
-	resourceProfile string
-	ownerRef        metav1.OwnerReference
+	Namespace        string
+	Version          string
+	serviceAccount   string
+	Replicas         int
+	dataDirHostPath  string
+	dataVolumeSize   resource.Quantity
+	annotations      rookalpha.Annotations
+	placement        rookalpha.Placement
+	context          *clusterd.Context
+	hostNetworkSpec  edgefsv1beta1.NetworkSpec
+	dashboardSpec    edgefsv1beta1.DashboardSpec
+	resources        v1.ResourceRequirements
+	resourceProfile  string
+	ownerRef         metav1.OwnerReference
+	useHostLocalTime bool
 }
 
 // New creates an instance of the mgr
@@ -86,6 +87,7 @@ func New(
 	resources v1.ResourceRequirements,
 	resourceProfile string,
 	ownerRef metav1.OwnerReference,
+	useHostLocalTime bool,
 ) *Cluster {
 
 	if serviceAccount == "" {
@@ -95,20 +97,21 @@ func New(
 	}
 
 	return &Cluster{
-		context:         context,
-		Namespace:       namespace,
-		serviceAccount:  serviceAccount,
-		annotations:     annotations,
-		placement:       placement,
-		Version:         version,
-		Replicas:        1,
-		dataDirHostPath: dataDirHostPath,
-		dataVolumeSize:  dataVolumeSize,
-		hostNetworkSpec: hostNetworkSpec,
-		dashboardSpec:   dashboardSpec,
-		resources:       resources,
-		resourceProfile: resourceProfile,
-		ownerRef:        ownerRef,
+		context:          context,
+		Namespace:        namespace,
+		serviceAccount:   serviceAccount,
+		annotations:      annotations,
+		placement:        placement,
+		Version:          version,
+		Replicas:         1,
+		dataDirHostPath:  dataDirHostPath,
+		dataVolumeSize:   dataVolumeSize,
+		hostNetworkSpec:  hostNetworkSpec,
+		dashboardSpec:    dashboardSpec,
+		resources:        resources,
+		resourceProfile:  resourceProfile,
+		ownerRef:         ownerRef,
+		useHostLocalTime: useHostLocalTime,
 	}
 }
 
@@ -131,7 +134,16 @@ func (c *Cluster) Start(rookImage string) error {
 			return fmt.Errorf("failed to create %s deployment. %+v", appName, err)
 		}
 		logger.Infof("deployment for mgr %s already exists. updating if needed", appName)
-		if _, err := k8sutil.UpdateDeploymentAndWait(c.context, deployment, c.Namespace); err != nil {
+
+		// If mgr deployment already exists, then we need to force deployment update to prevent placement manager over the node with unexisting target pod on it
+		deployment.Spec.Template.Annotations["edgefs.io/update-timestamp"] = fmt.Sprintf("%d", time.Now().Unix())
+
+		// placeholder for a verify callback
+		// see comments on k8sutil.UpdateDeploymentAndWait's definition to understand its purpose
+		callback := func(action string) error {
+			return nil
+		}
+		if _, err := k8sutil.UpdateDeploymentAndWait(c.context, deployment, c.Namespace, callback); err != nil {
 			return fmt.Errorf("failed to update mgr deployment %s. %+v", appName, err)
 		}
 	} else {
@@ -244,7 +256,7 @@ func (c *Cluster) makeUIService(name string) *v1.Service {
 		},
 		Spec: v1.ServiceSpec{
 			Selector: labels,
-			Type:     v1.ServiceTypeNodePort,
+			Type:     v1.ServiceTypeClusterIP,
 			Ports: []v1.ServicePort{
 				{
 					Name:     "http-ui",
@@ -280,35 +292,14 @@ func (c *Cluster) makeUIService(name string) *v1.Service {
 	return svc
 }
 
-// getModifiedRookImagePath takes current edgefs path to provide modified path to specific images
-// I.e in case of original edgefs path: edgefs/edgefs:1.1.215 then edgefs ui path should be
-// edgefs/edgefs-ui:1.1.215 and edgefs-restapi should be edgefs/edgefs-restapi:1.1.215
-// addon param is edgefs image suffix. To get restapi image path getModifiedRookImagePath(edgefsImage, "restapi")
-func getModifiedRookImagePath(originRookImage, addon string) string {
-	imageParts := strings.Split(originRookImage, "/")
-	latestImagePartIndex := len(imageParts) - 1
-	modifiedImageName := "edgefs"
-	modifiedImageTag := "latest"
-
-	latestImagePart := imageParts[latestImagePartIndex]
-	imageVersionParts := strings.Split(latestImagePart, ":")
-	if len(imageVersionParts) > 1 {
-		modifiedImageTag = imageVersionParts[1]
-	}
-
-	if len(addon) > 0 {
-		modifiedImageName = fmt.Sprintf("%s-%s", imageVersionParts[0], addon)
-	} else {
-		modifiedImageName = fmt.Sprintf("%s", imageVersionParts[0])
-	}
-
-	imageParts[latestImagePartIndex] = fmt.Sprintf("%s:%s", modifiedImageName, modifiedImageTag)
-	return strings.Join(imageParts, "/")
-}
-
 func (c *Cluster) makeDeployment(name, clusterName, rookImage string, replicas int32) *apps.Deployment {
 
 	volumes := []v1.Volume{}
+
+	if c.useHostLocalTime {
+		volumes = append(volumes, edgefsv1beta1.GetHostLocalTimeVolume())
+	}
+
 	if c.dataVolumeSize.Value() > 0 {
 		// dataVolume case
 		volumes = append(volumes, v1.Volume{
@@ -339,9 +330,9 @@ func (c *Cluster) makeDeployment(name, clusterName, rookImage string, replicas i
 		Spec: v1.PodSpec{
 			ServiceAccountName: c.serviceAccount,
 			Containers: []v1.Container{
-				c.mgmtContainer(name, getModifiedRookImagePath(rookImage, "restapi")),
-				c.mgrContainer("grpc", rookImage),
-				c.uiContainer("ui", getModifiedRookImagePath(rookImage, "ui")),
+				c.restApiContainer(name, edgefsv1beta1.GetModifiedRookImagePath(rookImage, "restapi")),
+				c.grpcProxyContainer("grpc", rookImage),
+				c.uiContainer("ui", edgefsv1beta1.GetModifiedRookImagePath(rookImage, "ui")),
 			},
 			RestartPolicy: v1.RestartPolicyAlways,
 			Volumes:       volumes,
@@ -392,6 +383,11 @@ func (c *Cluster) uiContainer(name string, containerImage string) v1.Container {
 		ReadOnlyRootFilesystem: &readOnlyRootFilesystem,
 	}
 
+	volumeMounts := []v1.VolumeMount{}
+	if c.useHostLocalTime {
+		volumeMounts = append(volumeMounts, edgefsv1beta1.GetHostLocalTimeVolumeMount())
+	}
+
 	return v1.Container{
 		Name:            name,
 		Image:           containerImage,
@@ -429,10 +425,11 @@ func (c *Cluster) uiContainer(name string, containerImage string) v1.Container {
 				Protocol:      v1.ProtocolTCP,
 			},
 		},
+		VolumeMounts: volumeMounts,
 	}
 }
 
-func (c *Cluster) mgmtContainer(name string, containerImage string) v1.Container {
+func (c *Cluster) restApiContainer(name string, containerImage string) v1.Container {
 
 	runAsUser := int64(0)
 	readOnlyRootFilesystem := false
@@ -455,6 +452,10 @@ func (c *Cluster) mgmtContainer(name string, containerImage string) v1.Container
 			MountPath: "/opt/nedge/var/run",
 			SubPath:   stateVolumeFolder,
 		},
+	}
+
+	if c.useHostLocalTime {
+		volumeMounts = append(volumeMounts, edgefsv1beta1.GetHostLocalTimeVolumeMount())
 	}
 
 	cont := v1.Container{
@@ -524,7 +525,7 @@ func (c *Cluster) mgmtContainer(name string, containerImage string) v1.Container
 	return cont
 }
 
-func (c *Cluster) mgrContainer(name string, containerImage string) v1.Container {
+func (c *Cluster) grpcProxyContainer(name string, containerImage string) v1.Container {
 
 	runAsUser := int64(0)
 	readOnlyRootFilesystem := false
@@ -549,11 +550,16 @@ func (c *Cluster) mgrContainer(name string, containerImage string) v1.Container 
 		},
 	}
 
+	if c.useHostLocalTime {
+		volumeMounts = append(volumeMounts, edgefsv1beta1.GetHostLocalTimeVolumeMount())
+	}
+
 	cont := v1.Container{
 		Name:            name,
 		Image:           containerImage,
 		ImagePullPolicy: v1.PullAlways,
 		Args:            []string{"mgmt"},
+		LivenessProbe:   c.getLivenessProbe(),
 		Env: []v1.EnvVar{
 			{
 				Name:  "CCOW_LOG_LEVEL",
@@ -596,6 +602,21 @@ func (c *Cluster) mgrContainer(name string, containerImage string) v1.Container 
 	}
 
 	return cont
+}
+
+func (c *Cluster) getLivenessProbe() *v1.Probe {
+	return &v1.Probe{
+		Handler: v1.Handler{
+			Exec: &v1.ExecAction{
+				Command: []string{"/opt/nedge/sbin/grpc-proxy-liveness.sh"},
+			},
+		},
+		InitialDelaySeconds: 20,
+		PeriodSeconds:       20,
+		TimeoutSeconds:      10,
+		SuccessThreshold:    1,
+		FailureThreshold:    6,
+	}
 }
 
 func (c *Cluster) getLabels() map[string]string {
