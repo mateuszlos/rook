@@ -1,4 +1,4 @@
-{{ if .Values.network }}
+{{ if .Values.config_override }}
 kind: ConfigMap
 apiVersion: v1
 metadata:
@@ -7,8 +7,11 @@ metadata:
 data:
   config: |
     [global]
-    public network =  {{ .Values.cluster.network.public_net }}
-    cluster network = {{ .Values.cluster.network.cluster_net }}
-    public addr = ""
-    cluster addr = ""
-{{ end }}
+    {{ range $key, $value := .Values.config_override}}
+    {{ $key }} = {{ $value }}
+    {{- end }}
+{{- end }}
+# public network =  {{ .Values.cluster.network.public_net }}
+# cluster network = {{ .Values.cluster.network.cluster_net }}
+# public addr = ""
+# cluster addr = ""

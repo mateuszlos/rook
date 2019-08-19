@@ -1,4 +1,9 @@
 cluster:
+  config_override:
+    public_net: 192.168.0.0/16
+    cluster_net: 192.169.0.0/16
+    public addr = ""
+    cluster addr = ""
   cephVersion:
     image: ceph/ceph:v14.2.1-20190430
     allowUnsupported: false
@@ -9,8 +14,6 @@ cluster:
   dashboard:
     enabled: true
   network:
-    public_net: 10.2.0.0/16
-    cluster_net: 10.3.0.0/16
     hostNetwork: false
   rbdMirroring:
     workers: 0
