@@ -366,6 +366,8 @@ type GatewaySpec struct {
 
 	// The resource requirements for the rgw pods
 	Resources v1.ResourceRequirements `json:"resources"`
+
+	Config map[string]string `json:"config"`
 }
 
 // +genclient
@@ -420,7 +422,9 @@ type NetworkSpec struct {
 	rook.NetworkSpec `json:",inline"`
 
 	// HostNetwork to enable host network
-	HostNetwork bool `json:"hostNetwork"`
+	HostNetwork    bool   `json:"hostNetwork"`
+	PublicNetwork  string `json:"public_net,omitempty"`
+	ClusterNetwork string `json:"private_net,omitempty"`
 }
 
 // DisruptionManagementSpec configures mangement of daemon disruptions

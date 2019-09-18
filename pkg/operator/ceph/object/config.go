@@ -56,14 +56,21 @@ func rgwFrontend(v cephver.CephVersion) string {
 
 // TODO: these should be set in the mon's central kv store for mimic+
 func (c *clusterConfig) defaultFlags() []string {
-	return []string{
-		cephconfig.NewFlag("rgw log nonexistent bucket", "true"),
-		cephconfig.NewFlag("rgw intent log object name utc", "true"),
-		cephconfig.NewFlag("rgw enable usage log", "true"),
-		cephconfig.NewFlag("rgw frontends", fmt.Sprintf("%s %s", rgwFrontend(c.clusterInfo.CephVersion), c.portString(c.clusterInfo.CephVersion))),
-		cephconfig.NewFlag("rgw zone", c.store.Name),
-		cephconfig.NewFlag("rgw zonegroup", c.store.Name),
+
+	var defaultflags []string
+
+	defaultflags = append(defaultflags, cephconfig.NewFlag("rgw log nonexistent bucket", "true"))
+	defaultflags = append(defaultflags, cephconfig.NewFlag("rgw intent log object name utc", "true"))
+	defaultflags = append(defaultflags, cephconfig.NewFlag("rgw enable usage log", "true"))
+	defaultflags = append(defaultflags, cephconfig.NewFlag("rgw frontends", fmt.Sprintf("%s %s", rgwFrontend(c.clusterInfo.CephVersion), c.portString(c.clusterInfo.CephVersion))))
+	defaultflags = append(defaultflags, cephconfig.NewFlag("rgw zone", c.store.Name))
+	defaultflags = append(defaultflags, cephconfig.NewFlag("rgw zonegroup", c.store.Name))
+
+	for key, value := range c.store.Spec.Gateway.Config {
+		defaultflags = append(defaultflags, cephconfig.NewFlag(key, value))
 	}
+
+	return defaultflags
 }
 
 func (c *clusterConfig) portString(v cephver.CephVersion) string {
