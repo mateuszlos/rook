@@ -98,6 +98,20 @@ func (c *Cluster) makeJob(osdProps osdProperties) (*batch.Job, error) {
 	return job, nil
 }
 
+func publicIPEnvVar(c *Cluster) v1.EnvVar {
+	if c.Network.PublicNetwork != "" {
+		return v1.EnvVar{Name: "ROOK_PUBLIC_NET", Value: c.Network.PublicNetwork}
+	}
+	return k8sutil.PodIPEnvVar(k8sutil.PublicIPEnvVar)
+}
+
+func privateIPEnvVar(c *Cluster) v1.EnvVar {
+	if c.Network.ClusterNetwork != "" {
+		return v1.EnvVar{Name: "ROOK_PRIVATE_NET", Value: c.Network.ClusterNetwork}
+	}
+	return k8sutil.PodIPEnvVar(k8sutil.PrivateIPEnvVar)
+}
+
 func (c *Cluster) makeDeployment(osdProps osdProperties, osd OSDInfo) (*apps.Deployment, error) {
 
 	replicaCount := int32(1)
@@ -148,8 +162,8 @@ func (c *Cluster) makeDeployment(osdProps osdProperties, osd OSDInfo) (*apps.Dep
 	tiniEnvVar := v1.EnvVar{Name: "TINI_SUBREAPER", Value: ""}
 	envVars := []v1.EnvVar{
 		nodeNameEnvVar(osdProps.crushHostname),
-		k8sutil.PodIPEnvVar(k8sutil.PrivateIPEnvVar),
-		k8sutil.PodIPEnvVar(k8sutil.PublicIPEnvVar),
+		publicIPEnvVar(c),
+		privateIPEnvVar(c),
 		tiniEnvVar,
 	}
 	envVars = append(envVars, k8sutil.ClusterDaemonEnvVars(c.cephVersion.Image)...)
@@ -508,8 +522,8 @@ func (c *Cluster) getConfigEnvVars(storeConfig config.StoreConfig, dataDir, node
 	envVars := []v1.EnvVar{
 		nodeNameEnvVar(nodeName),
 		{Name: "ROOK_CLUSTER_ID", Value: string(c.ownerRef.UID)},
-		k8sutil.PodIPEnvVar(k8sutil.PrivateIPEnvVar),
-		k8sutil.PodIPEnvVar(k8sutil.PublicIPEnvVar),
+		publicIPEnvVar(c),
+		privateIPEnvVar(c),
 		opmon.ClusterNameEnvVar(c.Namespace),
 		opmon.EndpointEnvVar(),
 		opmon.SecretEnvVar(),

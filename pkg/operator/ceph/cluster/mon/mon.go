@@ -22,6 +22,7 @@ package mon
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -570,6 +571,29 @@ func (c *Cluster) initMonIPs(mons []*monConfig) error {
 	return nil
 }
 
+func (c *Cluster) monPublicNet(node string) (string, error) {
+	var ip string
+	cmName := k8sutil.TruncateNodeName("node-ips-%s", node)
+	cm, err := c.context.Clientset.CoreV1().ConfigMaps(c.Namespace).Get(cmName, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("assignmon: unable to get configmap %s. %+v",
+			cmName, err)
+	}
+	_, network, err := net.ParseCIDR(c.Network.PublicNetwork)
+	if err != nil {
+		return "", fmt.Errorf("assignmon: unable to parse public network %s. %+v",
+			c.Network.PublicNetwork, err)
+	}
+	var ips []string
+	json.Unmarshal([]byte(cm.Data["ips"]), &ips)
+	for _, address := range ips {
+		if network.Contains(net.ParseIP(address)) {
+			ip = address
+		}
+	}
+	return ip, nil
+}
+
 func (c *Cluster) assignMons(mons []*monConfig) error {
 	// when monitors are scheduling below by invoking scheduleMonitor() a canary
 	// deployment and optional canary PVC are created. in order for the
@@ -637,6 +661,13 @@ func (c *Cluster) assignMons(mons []*monConfig) error {
 			if err != nil {
 				return fmt.Errorf("assignmon: couldn't get node info for node %s. %+v",
 					nodeChoice.Name, err)
+			}
+			if c.Network.PublicNetwork != "" {
+				nodeInfo.Address, err = c.monPublicNet(nodeChoice.Name)
+				if err != nil {
+					return err
+				}
+				logger.Infof("assignmon: using %s as mon %s address", mon.DaemonName, nodeInfo.Address)
 			}
 		} else {
 			logger.Infof("assignmon: mon %s placement using native scheduler", mon.DaemonName)

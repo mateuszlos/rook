@@ -24,7 +24,6 @@ import (
 	"github.com/rook/rook/pkg/clusterd"
 	cephconfig "github.com/rook/rook/pkg/daemon/ceph/config"
 	osdconfig "github.com/rook/rook/pkg/operator/ceph/cluster/osd/config"
-	"github.com/rook/rook/pkg/util/flags"
 )
 
 // Cmd is the main command for operator and daemons.
@@ -73,6 +72,8 @@ func createContext() *clusterd.Context {
 func addCephFlags(command *cobra.Command) {
 	command.Flags().StringVar(&cfg.networkInfo.PublicAddr, "public-ip", "", "public IP address for this machine")
 	command.Flags().StringVar(&cfg.networkInfo.ClusterAddr, "private-ip", "", "private IP address for this machine")
+	command.Flags().StringVar(&cfg.networkInfo.PublicNetwork, "public-net", "", "public IP address for this machine")
+	command.Flags().StringVar(&cfg.networkInfo.ClusterNetwork, "private-net", "", "private IP address for this machine")
 	command.Flags().StringVar(&clusterInfo.Name, "cluster-name", "rookcluster", "ceph cluster name")
 	command.Flags().StringVar(&clusterInfo.FSID, "fsid", "", "the cluster uuid")
 	command.Flags().StringVar(&clusterInfo.MonitorSecret, "mon-secret", "", "the cephx keyring for monitors")
@@ -83,19 +84,19 @@ func addCephFlags(command *cobra.Command) {
 
 	// deprecated ipv4 format address
 	// TODO: remove these legacy flags in the future
-	command.Flags().StringVar(&cfg.networkInfo.PublicAddrIPv4, "public-ipv4", "", "public IPv4 address for this machine")
-	command.Flags().StringVar(&cfg.networkInfo.ClusterAddrIPv4, "private-ipv4", "", "private IPv4 address for this machine")
-	command.Flags().MarkDeprecated("public-ipv4", "Use --public-ip instead. Will be removed in a future version.")
-	command.Flags().MarkDeprecated("private-ipv4", "Use --private-ip instead. Will be removed in a future version.")
+	// command.Flags().StringVar(&cfg.networkInfo.PublicAddrIPv4, "public-ipv4", "", "public IPv4 address for this machine")
+	// command.Flags().StringVar(&cfg.networkInfo.ClusterAddrIPv4, "private-ipv4", "", "private IPv4 address for this machine")
+	// command.Flags().MarkDeprecated("public-ipv4", "Use --public-ip instead. Will be removed in a future version.")
+	// command.Flags().MarkDeprecated("private-ipv4", "Use --private-ip instead. Will be removed in a future version.")
 }
 
-func verifyRenamedFlags(cmd *cobra.Command) error {
-	renamed := []flags.RenamedFlag{
-		{NewFlagName: "public-ip", OldFlagName: "public-ipv4"},
-		{NewFlagName: "private-ip", OldFlagName: "private-ipv4"},
-	}
-	return flags.VerifyRenamedFlags(cmd, renamed)
-}
+// func verifyRenamedFlags(cmd *cobra.Command) error {
+// 	renamed := []flags.RenamedFlag{
+// 		{NewFlagName: "public-ip", OldFlagName: "public-ipv4"},
+// 		{NewFlagName: "private-ip", OldFlagName: "private-ipv4"},
+// 	}
+// 	return flags.VerifyRenamedFlags(cmd, renamed)
+// }
 
 func (c *config) NetworkInfo() clusterd.NetworkInfo {
 	return c.networkInfo.Simplify()

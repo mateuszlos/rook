@@ -228,9 +228,9 @@ func prepareOSD(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if err := verifyRenamedFlags(osdCmd); err != nil {
-		return err
-	}
+	// if err := verifyRenamedFlags(osdCmd); err != nil {
+	// 	return err
+	// }
 
 	var dataDevices []osddaemon.DesiredDevice
 	if osdDataDeviceFilter != "" {

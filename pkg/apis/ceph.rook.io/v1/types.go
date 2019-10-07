@@ -429,7 +429,9 @@ type NetworkSpec struct {
 	rook.NetworkSpec `json:",inline"`
 
 	// HostNetwork to enable host network
-	HostNetwork bool `json:"hostNetwork"`
+	HostNetwork    bool   `json:"hostNetwork"`
+	PublicNetwork  string `json:"public_net"`
+	ClusterNetwork string `json:"private_net"`
 }
 
 // DisruptionManagementSpec configures mangement of daemon disruptions
