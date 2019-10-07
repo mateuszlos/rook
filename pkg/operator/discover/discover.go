@@ -156,7 +156,7 @@ func (d *Discover) createDiscoverDaemonSet(namespace, discoverImage, securityAcc
 							},
 						},
 					},
-					HostNetwork: false,
+					HostNetwork: true,
 				},
 			},
 		},

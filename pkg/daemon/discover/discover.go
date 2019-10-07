@@ -72,6 +72,12 @@ func Run(context *clusterd.Context, probeInterval time.Duration) error {
 	udevEvents := make(chan string)
 	go udevBlockMonitor(udevEvents, udevEventPeriod)
 
+	err = updateIPsCM(context)
+	if err != nil {
+		logger.Infof("failed to update interfaces configmap: %v", err)
+		return err
+	}
+
 	for {
 		select {
 		case <-sigc:
@@ -276,6 +282,76 @@ func DeviceListsEqual(old, new string) (bool, error) {
 	}
 
 	return checkDeviceListsEqual(oldDevs, newDevs), nil
+}
+
+func updateIPsCM(context *clusterd.Context) error {
+	logger.Infof("updating ips configmap")
+	nodeName = os.Getenv(k8sutil.NodeNameEnvVar)
+	namespace = os.Getenv(k8sutil.PodNamespaceEnvVar)
+	cmName = k8sutil.TruncateNodeName("node-ips-%s", nodeName)
+	var lastIPs string
+	data, err := discoverIPs()
+	if err != nil {
+		logger.Infof("failed to discover available ip addresses: %v", err)
+		return err
+	}
+	cm, err = context.Clientset.CoreV1().ConfigMaps(namespace).Get(cmName, metav1.GetOptions{})
+	if err == nil {
+		lastIPs = cm.Data["ips"]
+		logger.Debugf("last IPs %s", lastIPs)
+	} else {
+		if !errors.IsNotFound(err) {
+			logger.Infof("failed to get configmap: %v", err)
+			return err
+		}
+
+		cm = &v1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      cmName,
+				Namespace: namespace,
+				Labels: map[string]string{
+					k8sutil.AppAttr: AppName,
+					NodeAttr:        nodeName,
+				},
+			},
+			Data: data,
+		}
+
+		_, err := context.Clientset.CoreV1().ConfigMaps(namespace).Create(cm)
+		if err != nil {
+			logger.Infof("failed to create configmap: %v", err)
+			return fmt.Errorf("failed to create local interface map %s: %+v", cmName, err)
+		}
+		lastIPs = data["ips"]
+	}
+	if lastIPs != data["ips"] {
+		cm.Data = data
+		cm, err = context.Clientset.CoreV1().ConfigMaps(namespace).Update(cm)
+		if err != nil {
+			logger.Infof("failed to update configmap %s: %v", cmName, err)
+			return err
+		}
+	}
+	return nil
+}
+
+func discoverIPs() (map[string]string, error) {
+	cmd := exec.Command("ip", "a", "s")
+	r, err := regexp.Compile("inet ((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(\\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3})")
+	if err != nil {
+		logger.Infof("failed to create configmap: %v", err)
+		return nil, fmt.Errorf("failed to compile regular expression")
+	}
+	output, _ := cmd.Output()
+	ips := r.FindAllStringSubmatch(string(output), -1)
+	data := make(map[string]string, 1)
+	data["ips"] = "["
+	for _, ip := range ips {
+		data["ips"] = data["ips"] + "\"" + ip[1] + "\", "
+	}
+	data["ips"] = strings.TrimRight(data["ips"], ", ") + "]"
+
+	return data, nil
 }
 
 func updateDeviceCM(context *clusterd.Context) error {
