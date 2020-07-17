@@ -12,3 +12,4 @@
 # OLM related stuff
 cluster/olm/ceph/deploy/*
 cluster/olm/ceph/templates/*
+buildrook.sh

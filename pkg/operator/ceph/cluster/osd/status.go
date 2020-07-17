@@ -20,8 +20,11 @@ package osd
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/pkg/errors"
+	"github.com/rook/rook/pkg/clusterd"
 	"github.com/rook/rook/pkg/operator/ceph/config"
 	"github.com/rook/rook/pkg/operator/k8sutil"
 	"github.com/rook/rook/pkg/util"
@@ -155,10 +158,33 @@ func (c *Cluster) checkNodesCompleted(selector string, config *provisionConfig, 
 	return originalNodes, remainingNodes, false, statuses, nil
 }
 
+func CephHealthCheck(context *clusterd.Context, clusterName string) error {
+	logger.Infof("checking ceph status")
+	cluster, err := context.RookClientset.CephV1().CephClusters("rook-ceph").Get("cephcluster", metav1.GetOptions{})
+
+	if err != nil {
+		return errors.Wrapf(err, "failed to check ceph status")
+	}
+	if cluster.Status.CephStatus != nil {
+		if cluster.Status.CephStatus.Health != "" {
+			if cluster.Status.CephStatus.Details != nil {
+				for message := range cluster.Status.CephStatus.Details {
+					if message == "OSD_DOWN" {
+						return errors.Wrapf(err, "osds are still down")
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+
+}
+
 func (c *Cluster) completeOSDsForAllNodes(config *provisionConfig, configOSDs bool, timeoutMinutes int) bool {
 	selector := fmt.Sprintf("%s=%s,%s=%s",
-		k8sutil.AppAttr, AppName,
 		orchestrationStatusKey, provisioningLabelKey,
+		k8sutil.AppAttr, AppName,
 	)
 
 	originalNodes, remainingNodes, completed, statuses, err := c.checkNodesCompleted(selector, config, configOSDs)
@@ -167,83 +193,106 @@ func (c *Cluster) completeOSDsForAllNodes(config *provisionConfig, configOSDs bo
 	}
 
 	currentTimeoutMinutes := 0
+	racks := map[string][]string{}
+	nodes, _ := c.context.Clientset.CoreV1().Nodes().List(metav1.ListOptions{})
+	for _, node := range nodes.Items {
+		racks[node.Labels["topology.rook.io/rack"]] = append(racks[node.Labels["topology.rook.io/rack"]], node.Name)
+
+	}
 	for {
-		opts := metav1.ListOptions{
-			LabelSelector: selector,
-			Watch:         true,
-			// start watching for changes on the orchestration status map
-			ResourceVersion: statuses.ResourceVersion,
-		}
-		logger.Infof("%d/%d node(s) completed osd provisioning, resource version %v", (originalNodes - remainingNodes.Count()), originalNodes, opts.ResourceVersion)
+	RacksLoop:
+		for rack := range racks {
+			opts := metav1.ListOptions{
+				LabelSelector: selector + ", node in (" + strings.Join(racks[rack], ",") + ")",
+				Watch:         true,
+				// start watching for changes on the orchestration status map
+				ResourceVersion: statuses.ResourceVersion,
+			}
+			logger.Infof("%d/%d node(s) completed osd provisioning, resource version %v", (originalNodes - remainingNodes.Count()), originalNodes, opts.ResourceVersion)
 
-		w, err := c.context.Clientset.CoreV1().ConfigMaps(c.Namespace).Watch(opts)
-		if err != nil {
-			logger.Warningf("failed to start watch on osd status, trying again. %v", err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
-		defer w.Stop()
+			w := map[string]watch.Interface{}
 
-	ResultLoop:
-		for {
-			select {
-			case e, ok := <-w.ResultChan():
-				if !ok {
-					logger.Infof("orchestration status config map result channel closed, will restart watch.")
-					w.Stop()
-					<-time.After(5 * time.Second)
-					leftNodes, leftRemainingNodes, completed, _, err := c.checkNodesCompleted(selector, config, configOSDs)
-					if err == nil {
+			w[rack], err = c.context.Clientset.CoreV1().ConfigMaps(c.Namespace).Watch(opts)
+			if err != nil {
+				logger.Warningf("failed to start watch on osd status, trying again. %v", err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+			defer w[rack].Stop()
+
+			e := map[string]watch.Event{}
+			ok := map[string]bool{}
+		ResultLoop:
+			for {
+				select {
+				case e[rack], ok[rack] = <-w[rack].ResultChan():
+					if !ok[rack] {
+						logger.Infof("orchestration status config map result channel closed, will restart watch.")
+						w[rack].Stop()
+						<-time.After(5 * time.Second)
+						leftNodes, leftRemainingNodes, completed, _, err := c.checkNodesCompleted(selector, config, configOSDs)
+						if err == nil {
+							if completed {
+								logger.Infof("additional %d/%d node(s) completed osd provisioning", leftNodes, originalNodes)
+								return true
+							}
+							remainingNodes = leftRemainingNodes
+						} else {
+							logger.Warningf("failed to list orchestration configmap, status: %v", err)
+						}
+						break ResultLoop
+					}
+					if e[rack].Type == watch.Modified {
+						configMap, ok := e[rack].Object.(*v1.ConfigMap)
+						if !ok {
+							logger.Errorf("expected type ConfigMap but found %T", configMap)
+							continue
+						}
+						node, ok := configMap.Labels[nodeLabelKey]
+						if !ok {
+							logger.Infof("missing node label on configmap %s", configMap.Name)
+							continue
+						}
+						if !remainingNodes.Contains(node) {
+							logger.Infof("skipping event from node %s status update since it is already completed", node)
+							continue
+						}
+
+						completed := c.handleStatusConfigMapStatus(node, config, configMap, configOSDs)
 						if completed {
-							logger.Infof("additional %d/%d node(s) completed osd provisioning", leftNodes, originalNodes)
-							return true
-						}
-						remainingNodes = leftRemainingNodes
-					} else {
-						logger.Warningf("failed to list orchestration configmap, status: %v", err)
-					}
-					break ResultLoop
-				}
-				if e.Type == watch.Modified {
-					configMap, ok := e.Object.(*v1.ConfigMap)
-					if !ok {
-						logger.Errorf("expected type ConfigMap but found %T", configMap)
-						continue
-					}
-					node, ok := configMap.Labels[nodeLabelKey]
-					if !ok {
-						logger.Infof("missing node label on configmap %s", configMap.Name)
-						continue
-					}
-					if !remainingNodes.Contains(node) {
-						logger.Infof("skipping event from node %s status update since it is already completed", node)
-						continue
-					}
-					completed := c.handleStatusConfigMapStatus(node, config, configMap, configOSDs)
-					if completed {
-						remainingNodes.Remove(node)
-						if remainingNodes.Count() == 0 {
-							logger.Infof("%d/%d node(s) completed osd provisioning", originalNodes, originalNodes)
-							return true
+							remainingNodes.Remove(node)
+							if remainingNodes.Count() == 0 {
+								logger.Infof("%d/%d node(s) completed osd provisioning", originalNodes, originalNodes)
+								return true
+							}
 						}
 					}
-				}
 
-			case <-time.After(time.Minute):
-				// log every so often while we are waiting
-				currentTimeoutMinutes++
-				if currentTimeoutMinutes == timeoutMinutes {
-					config.addError("timed out waiting for %d nodes: %+v", remainingNodes.Count(), remainingNodes)
-					//start to remove remainingNodes waiting timeout.
-					for remainingNode := range remainingNodes.Iter() {
-						clearNodeName := k8sutil.TruncateNodeName(orchestrationStatusMapName, remainingNode)
-						if err := c.kv.ClearStore(clearNodeName); err != nil {
-							config.addError("failed to clear node %q status with name %q. %v", remainingNode, clearNodeName, err)
+				case <-time.After(time.Minute):
+					// log every so often while we are waiting
+					currentTimeoutMinutes++
+					if currentTimeoutMinutes == timeoutMinutes {
+						config.addError("timed out waiting for %d nodes: %+v", remainingNodes.Count(), remainingNodes)
+						//start to remove remainingNodes waiting timeout.
+						for remainingNode := range remainingNodes.Iter() {
+							clearNodeName := k8sutil.TruncateNodeName(orchestrationStatusMapName, remainingNode)
+							if err := c.kv.ClearStore(clearNodeName); err != nil {
+								config.addError("failed to clear node %q status with name %q. %v", remainingNode, clearNodeName, err)
+							}
+						}
+						return false
+					}
+					logger.Infof("waiting on orchestration status update from %d remaining nodes", remainingNodes.Count())
+					for {
+						err := CephHealthCheck(c.context, "cephcluster")
+						if err == nil {
+							break
+						} else {
+							logger.Info(err)
 						}
 					}
-					return false
+					continue RacksLoop
 				}
-				logger.Infof("waiting on orchestration status update from %d remaining nodes", remainingNodes.Count())
 			}
 		}
 	}

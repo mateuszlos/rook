@@ -137,6 +137,50 @@ func UpdateDeploymentAndWait(context *clusterd.Context, modifiedDeployment *apps
 	return nil, nil
 }
 
+func UpdateDeploymentNoWait(context *clusterd.Context, modifiedDeployment *apps.Deployment, namespace string, verifyCallback func(action string) error) (*v1.Deployment, error) {
+	currentDeployment, err := context.Clientset.AppsV1().Deployments(namespace).Get(modifiedDeployment.Name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get deployment %s. %+v", modifiedDeployment.Name, err)
+	}
+
+	// Check whether the current deployement and newly generated one are identical
+	patchResult, err := patch.DefaultPatchMaker.Calculate(currentDeployment, modifiedDeployment)
+	if err != nil {
+		return nil, fmt.Errorf("failed to calculate diff between current deployment %q and newly generated one. %v", currentDeployment.Name, err)
+	}
+
+	// If deployments are different, let's update!
+	if !patchResult.IsEmpty() {
+		// Let's verify the deployment can be stopped
+		// retry for 5 times, every minute
+		err = util.Retry(5, 60*time.Second, func() error {
+			return verifyCallback("stop")
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to check if deployment %q can be updated. %v", modifiedDeployment.Name, err)
+		}
+
+		// Set hash annotation to the newly generated deployment
+		err := patch.DefaultAnnotator.SetLastAppliedAnnotation(modifiedDeployment)
+		if err != nil {
+			return nil, fmt.Errorf("failed to set hash annotation on deployment %q. %v", modifiedDeployment.Name, err)
+		}
+
+		logger.Infof("updating deployment %q", modifiedDeployment.Name)
+		if _, err := context.Clientset.AppsV1().Deployments(namespace).Update(modifiedDeployment); err != nil {
+			return nil, fmt.Errorf("failed to update deployment %q. %v", modifiedDeployment.Name, err)
+		}
+
+		d, err := context.Clientset.AppsV1().Deployments(namespace).Get(modifiedDeployment.Name, metav1.GetOptions{})
+
+		return d, nil
+
+	}
+
+	logger.Infof("deployment %q did not change, nothing to update", currentDeployment.Name)
+	return nil, nil
+}
+
 // GetDeployments returns a list of deployment names labels matching a given selector
 // example of a label selector might be "app=rook-ceph-mon, mon!=b"
 // more: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/

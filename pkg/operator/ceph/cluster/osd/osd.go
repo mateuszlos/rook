@@ -50,7 +50,7 @@ import (
 
 var (
 	logger                  = capnslog.NewPackageLogger("github.com/rook/rook", "op-osd")
-	updateDeploymentAndWait = mon.UpdateCephDeploymentAndWait
+	updateDeploymentAndWait = mon.UpdateCephDeploymentNoWait
 )
 
 const (
