@@ -332,3 +332,14 @@ func UpdateCephDeploymentAndWait(context *clusterd.Context, deployment *apps.Dep
 	_, err := k8sutil.UpdateDeploymentAndWait(context, deployment, namespace, callback)
 	return err
 }
+
+func UpdateCephDeploymentNoWait(context *clusterd.Context, deployment *apps.Deployment, namespace, daemonType, daemonName string, skipUpgradeChecks, continueUpgradeAfterChecksEvenIfNotHealthy bool) error {
+
+	callback := func(action string) error {
+
+		return nil
+	}
+
+	_, err := k8sutil.UpdateDeploymentNoWait(context, deployment, namespace, callback)
+	return err
+}

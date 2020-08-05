@@ -80,6 +80,9 @@ type ClusterSpec struct {
 	// ContinueUpgradeAfterChecksEvenIfNotHealthy defines if an upgrade should continue even if PGs are not clean
 	ContinueUpgradeAfterChecksEvenIfNotHealthy bool `json:"continueUpgradeAfterChecksEvenIfNotHealthy,omitempty"`
 
+	// Enable restarting groups of OSDs during upgrades
+	AsyncOsdRestarts bool `json:"asyncOsdRestarts,omitempty"`
+
 	// A spec for configuring disruption management.
 	DisruptionManagement DisruptionManagementSpec `json:"disruptionManagement,omitempty"`
 
